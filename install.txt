@@ -1,1 +1,1 @@
-sudo apt update && sudo apt install -y git curl && curl -fsSL https://raw.githubusercontent.com/ogerrva/FyxStoryFlow/refs/heads/main/install.sh -o install.sh && chmod +x install.sh && ./install.sh
+sudo apt update && sudo apt install -y git curl && curl -fsSL https://raw.githubusercontent.com/ogerrva/FyxStoryFlow/refs/heads/main/storyflow.sh -o storyflow.sh && chmod +x storyflow.sh && ./storyflow.sh

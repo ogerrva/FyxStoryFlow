@@ -63,27 +63,44 @@ async function processStory(story) {
     log(story.userId, 'INFO', `Processing story: ${story.id}`);
     
     const settings = await getUserSettings(story.userId);
-    const HEADLESS = settings.headless_mode === 'true' || settings.headless_mode === undefined; // Default true
+    
+    // VPS FIX: Ensure headless is correctly interpreted as boolean
+    // Even if DB returns string "false", we want boolean false. Default to true (Headless) for VPS safety.
+    let HEADLESS = true;
+    if (settings.headless_mode === 'false' || settings.headless_mode === false) {
+        HEADLESS = false;
+    }
+    
+    log(story.userId, 'INFO', `Launching Browser (Headless: ${HEADLESS})...`);
+
     const PROXY = settings.proxy_server ? { server: settings.proxy_server } : undefined;
 
-    const browser = await chromium.launch({ 
-        headless: HEADLESS,
-        proxy: PROXY,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] // Critical flags for VPS
-    });
-    
-    // Load specific user session from DATA_DIR
-    const sessionPath = path.join(DATA_DIR, `session_${story.userId}.json`);
-    
-    const context = await browser.newContext({
-        ...chromium.devices['Pixel 5'], 
-        locale: 'pt-BR',
-        storageState: fs.existsSync(sessionPath) ? sessionPath : undefined,
-        userAgent: 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36'
-    });
-    const page = await context.newPage();
+    let browser = null;
 
     try {
+        browser = await chromium.launch({ 
+            headless: HEADLESS,
+            proxy: PROXY,
+            // VPS CRITICAL ARGS: Prevent crash on root/docker/low-memory envs
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage',
+                '--disable-gpu' 
+            ] 
+        });
+        
+        // Load specific user session from DATA_DIR
+        const sessionPath = path.join(DATA_DIR, `session_${story.userId}.json`);
+        
+        const context = await browser.newContext({
+            ...chromium.devices['Pixel 5'], 
+            locale: 'pt-BR',
+            storageState: fs.existsSync(sessionPath) ? sessionPath : undefined,
+            userAgent: 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36'
+        });
+        const page = await context.newPage();
+
         const username = settings.instagram_username;
         const password = settings.instagram_password;
 
@@ -100,7 +117,6 @@ async function processStory(story) {
         const fileChooserPromise = page.waitForEvent('filechooser');
         
         // Find Story Button (Mobile view)
-        // Try multiple selectors as IG changes them often
         let clicked = false;
         const selectors = [
             'div[role="button"]:has-text("Your Story")',
@@ -117,18 +133,14 @@ async function processStory(story) {
         }
         
         if (!clicked) {
-            // Fallback: direct navigation (unlikely to work for story creation but worth a try or clicking profile picture)
             await page.getByRole('button', { name: 'Story' }).first().click().catch(() => {});
         }
 
         const fileChooser = await fileChooserPromise;
         
-        // Resolve Image Path (Absolute)
-        // If imagePath is relative (from DB), resolve it. If absolute, use as is.
+        // Resolve Image Path
         let absoluteImagePath = story.imagePath;
         if (!path.isAbsolute(story.imagePath)) {
-             // Assuming server/index.js saves relative to its CWD, but multer usually gives full path.
-             // If multer stored relative, fix here.
              absoluteImagePath = path.resolve(story.imagePath); 
         }
 
@@ -141,12 +153,6 @@ async function processStory(story) {
         log(story.userId, 'INFO', `Placing sticker/link...`);
         const viewport = page.viewportSize();
         if (viewport && story.ctaUrl) {
-            // Heuristics for "Link" sticker
-            // Note: This is extremely brittle in web automation as IG Web doesn't fully support all mobile sticker features.
-            // We simulate adding text which often converts to a link if it's a URL in some contexts, 
-            // OR we rely on the user having "Swipe Up" (10k+ followers) which implies a link button.
-            // Since IG Web story creation is limited, this simulates a "Text" sticker acting as a CTA.
-            
             await page.mouse.click(viewport.width * 0.5, viewport.height * 0.5); 
             await page.keyboard.type(story.ctaUrl); 
             await page.waitForTimeout(1000);
@@ -168,12 +174,8 @@ async function processStory(story) {
         let nextSchedules = schedules.filter(s => new Date(s) > now);
 
         if (story.isRecurring === 1) {
-            // Find the executed schedule time (approx) and add 24h
-            // Simply take current time + 24h for simplicity or find next valid slot
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
-            // Ideally preserve the original hour/minute from the schedule list
-            // For now, we assume simple daily repetition
             nextSchedules.push(tomorrow.toISOString());
         }
 
@@ -189,10 +191,10 @@ async function processStory(story) {
         db.prepare("UPDATE stories SET status = 'FAILED' WHERE id = ?").run(story.id);
         try { 
             const errorShotPath = path.join(DATA_DIR, `error_${story.id}.png`);
-            await page.screenshot({ path: errorShotPath }); 
+            if (browser) await browser.contexts()[0]?.pages()[0]?.screenshot({ path: errorShotPath }); 
         } catch(e){}
     } finally {
-        await browser.close();
+        if (browser) await browser.close();
     }
 }
 
