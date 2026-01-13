@@ -14,14 +14,15 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || 'fyx_secret_key_change_me_in_prod';
-const DEFAULT_PORT = 3001;
+// Prioritize environment variable for port (Essential for PM2/VPS)
+const DEFAULT_PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
 
 // Serve Static Files
 const uploadDir = path.join(__dirname, '../uploads');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 app.use('/uploads', express.static(uploadDir));
 app.use(express.static(path.join(__dirname, '../dist')));
 
@@ -46,7 +47,7 @@ const authenticateToken = (req, res, next) => {
 };
 
 const requireAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') return res.sendStatus(403);
+  if (req.user && req.user.role !== 'admin') return res.sendStatus(403);
   next();
 };
 
@@ -85,6 +86,8 @@ app.post('/api/stories', authenticateToken, upload.single('image'), (req, res) =
   const { ctaUrl, whatsappNumber, whatsappMessage, stickerText, caption, schedules, stickerX, stickerY, isRecurring } = req.body;
   const id = Date.now().toString();
   
+  if (!req.file) return res.status(400).json({ error: 'Image is required' });
+
   db.prepare(`
     INSERT INTO stories (
       id, userId, imagePath, ctaUrl, whatsappNumber, whatsappMessage, stickerText,
