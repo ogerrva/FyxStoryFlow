@@ -2,34 +2,38 @@
 
 # Cores
 GREEN='\033[0;32m'
+BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}>>> INICIANDO CORREÇÃO E INSTALAÇÃO...${NC}"
+echo -e "${BLUE}=================================================${NC}"
+echo -e "${BLUE}   FYX STORY FLOW - INSTALAÇÃO SEGURA (VPS)      ${NC}"
+echo -e "${BLUE}=================================================${NC}"
 
-# 1. Limpeza Bruta do NPM e PM2 (Corrige o erro ENOTEMPTY)
-echo -e "${GREEN}>>> Limpando instalações corrompidas do PM2...${NC}"
-pm2 kill 2>/dev/null
-sudo npm uninstall -g pm2
-sudo rm -rf /usr/lib/node_modules/pm2
-sudo rm -rf /usr/local/lib/node_modules/pm2
-sudo rm -rf ~/.pm2
-sudo rm -rf /root/.pm2
+# 1. Verificações de Segurança do Ambiente
+echo -e "${GREEN}>>> Verificando ambiente...${NC}"
 
-# 2. Atualizar Node (Garantia)
-echo -e "${GREEN}>>> Verificando Node.js...${NC}"
+# Verifica Node.js sem forçar reinstalação se já estiver numa versão compatível
 if ! command -v node &> /dev/null; then
+    echo "Node.js não detectado. Instalando..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
     sudo apt install -y nodejs
+else
+    NODE_VERSION=$(node -v)
+    echo -e "Node.js já instalado: ${NODE_VERSION}"
 fi
 
-# 3. Instalar PM2 Limpo
-echo -e "${GREEN}>>> Reinstalando PM2...${NC}"
-sudo npm install -g pm2
+# Verifica PM2 sem deletar configurações existentes
+if ! command -v pm2 &> /dev/null; then
+    echo "PM2 não detectado. Instalando..."
+    sudo npm install -g pm2
+else
+    echo -e "PM2 já instalado. Mantendo configuração atual."
+fi
 
-# 4. Verificar se package.json existe, se não, criar um básico para permitir npm install
+# 2. Garantir package.json (Caso o usuário não tenha copiado)
 if [ ! -f "package.json" ]; then
-    echo -e "${RED}AVISO: package.json não encontrado! Criando um padrão...${NC}"
+    echo -e "${GREEN}>>> Gerando package.json...${NC}"
     cat <<EOF > package.json
 {
   "name": "fyx-story-flow",
@@ -77,36 +81,48 @@ if [ ! -f "package.json" ]; then
 EOF
 fi
 
-# 5. Instalar Dependências do Projeto
-echo -e "${GREEN}>>> Instalando dependências (Isso pode demorar)...${NC}"
+# 3. Instalação de Dependências
+echo -e "${GREEN}>>> Instalando pacotes (npm install)...${NC}"
 npm install
 
-# 6. Instalar Playwright
-echo -e "${GREEN}>>> Instalando binários do Playwright...${NC}"
-npx playwright install --with-deps chromium
+# 4. Playwright (Binários do Navegador)
+echo -e "${GREEN}>>> Verificando binários do Playwright...${NC}"
+npx playwright install chromium --with-deps
 
-# 7. Build do Front-end
-echo -e "${GREEN}>>> Compilando Dashboard React...${NC}"
-# Garante que as pastas existem
+# 5. Build do Frontend
+echo -e "${GREEN}>>> Compilando Dashboard (Build)...${NC}"
+# Cria diretórios se não existirem para evitar erros de build
 mkdir -p src server components services
 npm run build
 
-# 8. Iniciar Serviços com PM2
-echo -e "${GREEN}>>> Iniciando processos...${NC}"
-pm2 delete all 2>/dev/null
+# 6. Gerenciamento de Processos (PM2) - MODO SEGURO
+echo -e "${GREEN}>>> Configurando processos no PM2...${NC}"
 
-# Backend API
-pm2 start server/index.js --name "api" --watch --ignore-watch="node_modules data uploads"
+# Remove APENAS os processos antigos deste aplicativo específico
+pm2 delete fyx-api 2>/dev/null || true
+pm2 delete fyx-worker 2>/dev/null || true
 
-# Worker Bot
-pm2 start server/worker.js --name "worker" --watch --ignore-watch="node_modules data uploads"
+# Inicia com nomes específicos (Namespaced)
+# API
+pm2 start server/index.js --name "fyx-api" --watch --ignore-watch="node_modules data uploads dist"
 
-# Salvar
+# Worker
+pm2 start server/worker.js --name "fyx-worker" --watch --ignore-watch="node_modules data uploads dist"
+
+# Salva a lista de processos (Mescla com os existentes na VPS)
 pm2 save
-pm2 startup | tail -n 1 | bash
+
+# Configura startup apenas se necessário (não sobrescreve se já configurado)
+pm2 startup | tail -n 1 | bash 2>/dev/null || true
+
+# Pegar IP externo para exibir
+IP_EXTERNO=$(curl -s ifconfig.me || echo "SEU_IP")
 
 echo -e "${GREEN}=========================================${NC}"
-echo -e "${GREEN}   INSTALAÇÃO CONCLUÍDA!   ${NC}"
+echo -e "${GREEN}   INSTALAÇÃO SEGURA CONCLUÍDA!   ${NC}"
 echo -e "${GREEN}=========================================${NC}"
-echo -e "Painel rodando em: http://$(curl -s ifconfig.me):3001"
-echo -e "Use ./storyflow.sh para gerenciar."
+echo -e "Acesse: http://${IP_EXTERNO}:3001"
+echo -e "Usuário: admin"
+echo -e "Senha:   admin123"
+echo -e ""
+echo -e "Use ./storyflow.sh para gerenciar APENAS este sistema."
