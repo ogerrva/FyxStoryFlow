@@ -2,11 +2,15 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
+import { fileURLToPath } from 'url';
 
-// Ensure data directory exists
-const dataDir = './data';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Ensure data directory exists (Absolute Path)
+const dataDir = path.join(__dirname, '../data');
 if (!fs.existsSync(dataDir)){
-    fs.mkdirSync(dataDir);
+    fs.mkdirSync(dataDir, { recursive: true });
 }
 
 const db = new Database(path.join(dataDir, 'storyflow.db'));
