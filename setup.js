@@ -79,9 +79,11 @@ const main = async () => {
                     try { execSync('pm2 delete fyx-worker', { stdio: 'ignore' }); } catch(e){}
                     
                     console.log(">> Closing Firewall Ports (3000-3005)...");
-                    // Try closing range on all firewalls
+                    // UFW
                     try { execSync('ufw delete allow 3000:3005/tcp', { stdio: 'inherit' }); } catch(e) {}
+                    // Firewalld
                     try { execSync('firewall-cmd --zone=public --remove-port=3000-3005/tcp --permanent', { stdio: 'ignore' }); execSync('firewall-cmd --reload', { stdio: 'ignore' }); } catch(e) {}
+                    // Iptables
                     try { execSync('iptables -D INPUT -p tcp --match multiport --dports 3000:3005 -j ACCEPT', { stdio: 'ignore' }); } catch(e) {}
                     
                     console.log(">> Removing Files...");
@@ -1342,30 +1344,32 @@ function createStructure() {
 }
 
 // --- HELPER: ROBUST FIREWALL CONFIGURATION ---
-function openPort(port) {
-    console.log(`>>> Attempting to open port ${port} via multiple firewall methods...`);
+function openPortRange(start, end) {
+    console.log(`>>> Attempting to open port range ${start}-${end}...`);
     
-    // Method 1: UFW (Common on Ubuntu/Debian)
-    try {
+    // UFW
+    try { 
         console.log("    Trying UFW...");
-        execSync(`ufw allow ${port}`, { stdio: 'ignore' });
+        execSync(`ufw allow ${start}:${end}/tcp`, { stdio: 'ignore' }); 
         console.log("    [SUCCESS] UFW command executed.");
-    } catch (e) { console.log("    [SKIP] UFW not available or failed."); }
+    } catch(e) { console.log("    [SKIP] UFW failed."); }
 
-    // Method 2: Firewalld (Common on CentOS/RHEL/Fedora)
-    try {
+    // Firewalld
+    try { 
         console.log("    Trying FirewallD...");
-        execSync(`firewall-cmd --zone=public --add-port=${port}/tcp --permanent`, { stdio: 'ignore' });
+        execSync(`firewall-cmd --zone=public --add-port=${start}-${end}/tcp --permanent`, { stdio: 'ignore' });
         execSync(`firewall-cmd --reload`, { stdio: 'ignore' });
         console.log("    [SUCCESS] FirewallD command executed.");
-    } catch (e) { console.log("    [SKIP] FirewallD not available or failed."); }
+    } catch(e) { console.log("    [SKIP] FirewallD failed."); }
 
-    // Method 3: Iptables (Universal fallback)
-    try {
-        console.log("    Trying IPTables (Runtime)...");
-        execSync(`iptables -A INPUT -p tcp --dport ${port} -j ACCEPT`, { stdio: 'ignore' });
+    // Iptables
+    try { 
+        console.log("    Trying IPTables...");
+        execSync(`iptables -A INPUT -p tcp --match multiport --dports ${start}:${end} -j ACCEPT`, { stdio: 'ignore' }); 
         console.log("    [SUCCESS] IPTables rule added.");
-    } catch (e) { console.log("    [SKIP] IPTables failed."); }
+    } catch(e) { console.log("    [SKIP] IPTables failed."); }
+    
+    console.log("    [DONE] Firewall rules applied (best effort).");
 }
 
 // --- HELPER: CREATE GLOBAL COMMAND ---
@@ -1390,7 +1394,8 @@ function installAndRun() {
         execSync('npx playwright install chromium --with-deps', { stdio: 'inherit' });
         
         // --- AUTO FIREWALL CONFIG ---
-        openPort(3001);
+        // Opening range 3000-3005 as requested for robustness
+        openPortRange(3000, 3005);
 
         console.log(">>> Building Frontend...");
         execSync('npm run build', { stdio: 'inherit' });
@@ -1426,7 +1431,7 @@ function installAndRun() {
         console.log("--------------------------------------------");
         console.log("   ⚠️  IMPORTANT CLOUD NOTE ⚠️");
         console.log("   If you are using AWS, Oracle Cloud, Azure, or Google Cloud:");
-        console.log("   You MUST open port 3001 in your 'Security Group' or 'VCN' panel on their website.");
+        console.log("   You MUST open ports 3000-3005 in your 'Security Group' or 'VCN' panel.");
         console.log("   Linux commands cannot open external cloud firewalls.");
         console.log("============================================");
     } catch (e) {
@@ -1437,4 +1442,4 @@ function installAndRun() {
 
 // Start
 createStructure();
-installAndRun();--- END OF FILE setup.js ---
+installAndRun();
