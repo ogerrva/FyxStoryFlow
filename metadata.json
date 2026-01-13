@@ -1,0 +1,5 @@
+{
+  "name": "FyxStoryFlow Dashboard",
+  "description": "Professional dashboard for controlling Instagram Story automation workflows, managing schedules, and monitoring Playwright worker logs.",
+  "requestFramePermissions": []
+}
