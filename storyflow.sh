@@ -1,70 +1,47 @@
 #!/bin/bash
 
-# CORES
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# Menu interativo para gerenciar o FyxStoryFlow
 
 while true; do
     clear
-    echo -e "${BLUE}========================================${NC}"
-    echo -e "${CYAN}   FYX STORY FLOW - CONTROLE VPS v3.0   ${NC}"
-    echo -e "${BLUE}========================================${NC}"
-    echo -e "1) 🟢 Status do Sistema"
-    echo -e "2) 🔄 Reiniciar Sistema"
-    echo -e "3) 📜 Ver Logs (Ao Vivo)"
-    echo -e "4) 🛑 Parar Sistema"
-    echo -e "5) 🔐 Resetar Senha Admin (Apaga DB)"
-    echo -e "6) 📦 Atualizar (Git Pull + Build)"
-    echo -e "0) 🚪 Sair"
-    echo -e "${BLUE}========================================${NC}"
-    read -p "Escolha uma opção: " option
+    echo "========================================================"
+    echo "   FYX STORY FLOW - PAINEL DE CONTROLE (VPS)"
+    echo "========================================================"
+    echo "1. 🟢 Status do Sistema"
+    echo "2. 📄 Ver Logs (API + Worker)"
+    echo "3. 🔄 Reiniciar Tudo"
+    echo "4. 🛑 Parar Tudo"
+    echo "5. 🗑️  Limpar Cache/Sessões (Correção de erros)"
+    echo "6. 🚪 Sair"
+    echo "========================================================"
+    read -p "Escolha uma opção: " choice
 
-    case $option in
+    case $choice in
         1)
-            pm2 status storyflow
+            pm2 status
             read -p "Pressione Enter para voltar..."
             ;;
         2)
-            echo "Reiniciando..."
-            pm2 restart storyflow
-            echo -e "${GREEN}Sistema reiniciado!${NC}"
-            sleep 2
+            pm2 logs --lines 50
             ;;
         3)
-            echo "Exibindo logs (Ctrl+C para sair)..."
-            pm2 logs storyflow
+            pm2 restart all
+            echo "Sistema reiniciado!"
+            sleep 2
             ;;
         4)
-            pm2 stop storyflow
-            echo -e "${RED}Sistema parado.${NC}"
+            pm2 stop all
+            echo "Sistema parado."
             sleep 2
             ;;
         5)
-            echo "Esta função requer acesso direto ao DB (sqlite3)."
-            echo "Para resetar, delete o arquivo data/storyflow.db e reinicie para recriar o admin padrão."
-            read -p "Deseja deletar o DB agora? (s/n): " confirm
-            if [[ $confirm == "s" ]]; then
-                rm -f data/storyflow.db
-                pm2 restart storyflow
-                echo "Banco resetado. Admin: admin / Senha: admin123"
-            fi
-            read -p "Pressione Enter para voltar..."
+            echo "Limpando sessões antigas..."
+            rm -rf data/session_*.json
+            pm2 restart storyflow-worker
+            echo "Feito. Tente logar novamente pelo Dashboard."
+            sleep 2
             ;;
         6)
-            echo "Atualizando repositório..."
-            git pull
-            echo "Reinstalando dependências..."
-            npm install
-            echo "Reconstruindo Painel..."
-            npm run build
-            pm2 restart storyflow
-            echo -e "${GREEN}Atualização completa!${NC}"
-            read -p "Pressione Enter para voltar..."
-            ;;
-        0)
             exit 0
             ;;
         *)
