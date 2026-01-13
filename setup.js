@@ -78,10 +78,14 @@ const main = async () => {
                     try { execSync('pm2 delete fyx-api', { stdio: 'ignore' }); } catch(e){}
                     try { execSync('pm2 delete fyx-worker', { stdio: 'ignore' }); } catch(e){}
                     
-                    console.log(">> Closing Firewall Port 3001...");
-                    try { execSync('ufw delete allow 3001', { stdio: 'inherit' }); } catch(e) { console.log(">> UFW not found or error, check firewall manually."); }
+                    console.log(">> Closing Firewall Ports (3000-3005)...");
+                    // Try closing range on all firewalls
+                    try { execSync('ufw delete allow 3000:3005/tcp', { stdio: 'inherit' }); } catch(e) {}
+                    try { execSync('firewall-cmd --zone=public --remove-port=3000-3005/tcp --permanent', { stdio: 'ignore' }); execSync('firewall-cmd --reload', { stdio: 'ignore' }); } catch(e) {}
+                    try { execSync('iptables -D INPUT -p tcp --match multiport --dports 3000:3005 -j ACCEPT', { stdio: 'ignore' }); } catch(e) {}
                     
                     console.log(">> Removing Files...");
+                    try { fs.unlinkSync('/usr/local/bin/flow-menu'); } catch(e){}
                     console.log(">> To finish, run: cd .. && rm -rf " + __dirname);
                     process.exit(0);
                 }
@@ -1337,6 +1341,46 @@ function createStructure() {
     });
 }
 
+// --- HELPER: ROBUST FIREWALL CONFIGURATION ---
+function openPort(port) {
+    console.log(`>>> Attempting to open port ${port} via multiple firewall methods...`);
+    
+    // Method 1: UFW (Common on Ubuntu/Debian)
+    try {
+        console.log("    Trying UFW...");
+        execSync(`ufw allow ${port}`, { stdio: 'ignore' });
+        console.log("    [SUCCESS] UFW command executed.");
+    } catch (e) { console.log("    [SKIP] UFW not available or failed."); }
+
+    // Method 2: Firewalld (Common on CentOS/RHEL/Fedora)
+    try {
+        console.log("    Trying FirewallD...");
+        execSync(`firewall-cmd --zone=public --add-port=${port}/tcp --permanent`, { stdio: 'ignore' });
+        execSync(`firewall-cmd --reload`, { stdio: 'ignore' });
+        console.log("    [SUCCESS] FirewallD command executed.");
+    } catch (e) { console.log("    [SKIP] FirewallD not available or failed."); }
+
+    // Method 3: Iptables (Universal fallback)
+    try {
+        console.log("    Trying IPTables (Runtime)...");
+        execSync(`iptables -A INPUT -p tcp --dport ${port} -j ACCEPT`, { stdio: 'ignore' });
+        console.log("    [SUCCESS] IPTables rule added.");
+    } catch (e) { console.log("    [SKIP] IPTables failed."); }
+}
+
+// --- HELPER: CREATE GLOBAL COMMAND ---
+function createGlobalCommand() {
+    console.log(">>> Creating global 'flow-menu' command...");
+    try {
+        const scriptPath = '/usr/local/bin/flow-menu';
+        const scriptContent = `#!/bin/bash\ncd "${__dirname}"\nnpm run manage\n`;
+        fs.writeFileSync(scriptPath, scriptContent, { mode: 0o755 });
+        console.log("    [SUCCESS] You can now type 'flow-menu' anywhere to access the manager.");
+    } catch (e) {
+        console.log("    [WARN] Could not create global command (permission denied?). You can still run 'npm run manage' manually.");
+    }
+}
+
 function installAndRun() {
     try {
         console.log("\n>>> Installing dependencies (npm install)...");
@@ -1346,13 +1390,7 @@ function installAndRun() {
         execSync('npx playwright install chromium --with-deps', { stdio: 'inherit' });
         
         // --- AUTO FIREWALL CONFIG ---
-        console.log(">>> Configuring Firewall (UFW) - Opening Port 3001...");
-        try {
-            execSync('ufw allow 3001', { stdio: 'inherit' });
-            console.log("    Port 3001 allowed.");
-        } catch (e) {
-            console.log("    Warning: Could not configure UFW automatically. Please ensure port 3001 is open manually.");
-        }
+        openPort(3001);
 
         console.log(">>> Building Frontend...");
         execSync('npm run build', { stdio: 'inherit' });
@@ -1364,6 +1402,9 @@ function installAndRun() {
         execSync('pm2 start server/index.js --name "fyx-api"', { stdio: 'inherit' });
         execSync('pm2 start server/worker.js --name "fyx-worker"', { stdio: 'inherit' });
         execSync('pm2 save', { stdio: 'inherit' });
+        
+        // --- CREATE SHORTCUT ---
+        createGlobalCommand();
         
         // --- DETECT PUBLIC IP ---
         let publicIp = "YOUR_VPS_IP";
@@ -1380,9 +1421,13 @@ function installAndRun() {
         console.log("   User: admin");
         console.log("   Pass: admin123");
         console.log("--------------------------------------------");
-        console.log("   MANAGEMENT CLI:");
-        console.log("   To recover passwords or uninstall, run:");
-        console.log("   npm run manage");
+        console.log("   MANAGEMENT:");
+        console.log("   Type: flow-menu");
+        console.log("--------------------------------------------");
+        console.log("   ⚠️  IMPORTANT CLOUD NOTE ⚠️");
+        console.log("   If you are using AWS, Oracle Cloud, Azure, or Google Cloud:");
+        console.log("   You MUST open port 3001 in your 'Security Group' or 'VCN' panel on their website.");
+        console.log("   Linux commands cannot open external cloud firewalls.");
         console.log("============================================");
     } catch (e) {
         console.error(">>> ERROR DURING INSTALLATION:", e.message);
@@ -1392,4 +1437,4 @@ function installAndRun() {
 
 // Start
 createStructure();
-installAndRun();
+installAndRun();--- END OF FILE setup.js ---
