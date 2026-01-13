@@ -11,9 +11,7 @@ console.log("\x1b[36m%s\x1b[0m", "   FYX STORY FLOW - GITHUB INSTALLER    ");
 console.log("\x1b[36m%s\x1b[0m", "========================================");
 
 // --- 1. FILE CONTENTS DATABASE ---
-// This object contains the entire application source code.
 const files = {
-  // --- CONFIG FILES ---
   "package.json": `{
   "name": "fyx-story-flow",
   "version": "3.0.0",
@@ -167,7 +165,6 @@ export default {
   </body>
 </html>`,
 
-  // --- BACKEND ---
   "server/db.js": `import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
@@ -562,7 +559,6 @@ setInterval(runWorker, CHECK_INTERVAL_MS);
 log('system', 'INFO', 'Worker Service Started');
 runWorker();`,
 
-  // --- FRONTEND SRC ---
   "src/index.tsx": `import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
@@ -594,7 +590,7 @@ export const helpContent = {
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 export const generateStoryCaption = async (base64Image: string, context: string): Promise<string> => {
   try {
-    const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
+    const cleanBase64 = base64Image.replace(/^data:image\\/(png|jpeg|jpg);base64,/, '');
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: { parts: [{ inlineData: { data: cleanBase64, mimeType: 'image/jpeg' } }, { text: 'Write a short caption (max 10 words). Context: ' + context }] },
@@ -836,7 +832,7 @@ export default function App() {
 
   useEffect(() => {
       if (!waNumber) { setGeneratedLink(''); return; }
-      const cleanNum = waNumber.replace(/\D/g, '');
+      const cleanNum = waNumber.replace(/\\D/g, '');
       const encodedMsg = encodeURIComponent(waMessage);
       setGeneratedLink(\`https://wa.me/\${cleanNum}?text=\${encodedMsg}\`);
   }, [waNumber, waMessage]);
