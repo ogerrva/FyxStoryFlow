@@ -1333,13 +1333,13 @@ function createStructure() {
     Object.entries(files).forEach(([filepath, content]) => {
         const fullPath = path.join(__dirname, filepath);
         fs.writeFileSync(fullPath, content);
-        console.log(\`    Created: \${filepath}\`);
+        console.log(`    Created: ${filepath}`);
     });
 }
 
 function installAndRun() {
     try {
-        console.log("\\n>>> Installing dependencies (npm install)...");
+        console.log("\n>>> Installing dependencies (npm install)...");
         execSync('npm install', { stdio: 'inherit' });
         
         console.log(">>> Installing Playwright Browsers...");
@@ -1371,10 +1371,10 @@ function installAndRun() {
             publicIp = execSync('curl -s ifconfig.me').toString().trim();
         } catch(e) { console.log("    Could not auto-detect IP."); }
 
-        console.log("\\n============================================");
+        console.log("\n============================================");
         console.log("   INSTALLATION COMPLETE!");
         console.log("   Status: ONLINE");
-        console.log(\`   Access URL: http://\${publicIp}:3001\`);
+        console.log(`   Access URL: http://${publicIp}:3001`);
         console.log("--------------------------------------------");
         console.log("   DEFAULT CREDENTIALS:");
         console.log("   User: admin");
