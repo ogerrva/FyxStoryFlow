@@ -7,11 +7,96 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 console.log("\x1b[36m%s\x1b[0m", "========================================");
-console.log("\x1b[36m%s\x1b[0m", "   FYX STORY FLOW - GITHUB INSTALLER    ");
+console.log("\x1b[36m%s\x1b[0m", "   FYX STORY FLOW - ENTERPRISE SETUP    ");
 console.log("\x1b[36m%s\x1b[0m", "========================================");
 
 // --- 1. FILE CONTENTS DATABASE ---
 const files = {
+  // --- UTILITY: MANAGE.JS (CLI MENU) ---
+  "manage.js": `import Database from 'better-sqlite3';
+import bcrypt from 'bcryptjs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import readline from 'readline';
+import { execSync } from 'child_process';
+import fs from 'fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const dbPath = path.join(__dirname, 'data/storyflow.db');
+
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const question = (query) => new Promise((resolve) => rl.question(query, resolve));
+
+console.clear();
+console.log("\\x1b[36m%s\\x1b[0m", "========================================");
+console.log("\\x1b[36m%s\\x1b[0m", "   FYX STORY FLOW - CLI MANAGER         ");
+console.log("\\x1b[36m%s\\x1b[0m", "========================================");
+
+const main = async () => {
+    while (true) {
+        console.log("\\n1. Reset Admin Password");
+        console.log("2. Create New Admin User");
+        console.log("3. View System Logs (Tail)");
+        console.log("4. Restart Services");
+        console.log("5. Uninstall & Close Ports");
+        console.log("0. Exit");
+        
+        const answer = await question("\\nSelect option: ");
+        
+        try {
+            if (answer === '1') {
+                const db = new Database(dbPath);
+                const newPass = await question("Enter new password for 'admin': ");
+                const hash = bcrypt.hashSync(newPass, 10);
+                db.prepare("UPDATE users SET password = ? WHERE username = 'admin'").run(hash);
+                console.log("\\x1b[32m%s\\x1b[0m", ">> Password updated successfully.");
+            }
+            else if (answer === '2') {
+                const db = new Database(dbPath);
+                const user = await question("Enter new username: ");
+                const pass = await question("Enter password: ");
+                const hash = bcrypt.hashSync(pass, 10);
+                try {
+                    db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)").run(Date.now().toString(), user, hash, 'admin');
+                    console.log("\\x1b[32m%s\\x1b[0m", ">> Admin user created.");
+                } catch(e) { console.log("\\x1b[31m%s\\x1b[0m", ">> Error: Username likely exists."); }
+            }
+            else if (answer === '3') {
+                console.log(">> Showing last 20 logs (Press Ctrl+C to exit logs)...");
+                try { execSync('pm2 logs --lines 20', { stdio: 'inherit' }); } catch(e) {}
+            }
+            else if (answer === '4') {
+                console.log(">> Restarting PM2...");
+                execSync('pm2 restart all', { stdio: 'inherit' });
+                console.log("\\x1b[32m%s\\x1b[0m", ">> Services restarted.");
+            }
+            else if (answer === '5') {
+                const confirm = await question("TYPE 'DELETE' TO CONFIRM UNINSTALL: ");
+                if (confirm === 'DELETE') {
+                    console.log(">> Stopping Services...");
+                    try { execSync('pm2 delete fyx-api', { stdio: 'ignore' }); } catch(e){}
+                    try { execSync('pm2 delete fyx-worker', { stdio: 'ignore' }); } catch(e){}
+                    
+                    console.log(">> Closing Firewall Port 3001...");
+                    try { execSync('ufw delete allow 3001', { stdio: 'inherit' }); } catch(e) { console.log(">> UFW not found or error, check firewall manually."); }
+                    
+                    console.log(">> Removing Files...");
+                    console.log(">> To finish, run: cd .. && rm -rf " + __dirname);
+                    process.exit(0);
+                }
+            }
+            else if (answer === '0') {
+                process.exit(0);
+            }
+        } catch (e) {
+            console.log("\\x1b[31m%s\\x1b[0m", "Error: " + e.message);
+        }
+    }
+};
+
+main();`,
+
   "package.json": `{
   "name": "fyx-story-flow",
   "version": "3.0.0",
@@ -23,7 +108,8 @@ const files = {
     "server": "node server/index.js",
     "worker": "node server/worker.js",
     "start": "npm run build && concurrently \\"npm run server\\" \\"npm run worker\\"",
-    "postinstall": "npx playwright install --with-deps"
+    "postinstall": "npx playwright install --with-deps",
+    "manage": "node manage.js"
   },
   "dependencies": {
     "react": "^19.2.3",
@@ -1247,18 +1333,27 @@ function createStructure() {
     Object.entries(files).forEach(([filepath, content]) => {
         const fullPath = path.join(__dirname, filepath);
         fs.writeFileSync(fullPath, content);
-        console.log(`    Created: ${filepath}`);
+        console.log(\`    Created: \${filepath}\`);
     });
 }
 
 function installAndRun() {
     try {
-        console.log("\n>>> Installing dependencies (npm install)...");
+        console.log("\\n>>> Installing dependencies (npm install)...");
         execSync('npm install', { stdio: 'inherit' });
         
         console.log(">>> Installing Playwright Browsers...");
         execSync('npx playwright install chromium --with-deps', { stdio: 'inherit' });
         
+        // --- AUTO FIREWALL CONFIG ---
+        console.log(">>> Configuring Firewall (UFW) - Opening Port 3001...");
+        try {
+            execSync('ufw allow 3001', { stdio: 'inherit' });
+            console.log("    Port 3001 allowed.");
+        } catch (e) {
+            console.log("    Warning: Could not configure UFW automatically. Please ensure port 3001 is open manually.");
+        }
+
         console.log(">>> Building Frontend...");
         execSync('npm run build', { stdio: 'inherit' });
         
@@ -1270,9 +1365,24 @@ function installAndRun() {
         execSync('pm2 start server/worker.js --name "fyx-worker"', { stdio: 'inherit' });
         execSync('pm2 save', { stdio: 'inherit' });
         
-        console.log("\n============================================");
+        // --- DETECT PUBLIC IP ---
+        let publicIp = "YOUR_VPS_IP";
+        try {
+            publicIp = execSync('curl -s ifconfig.me').toString().trim();
+        } catch(e) { console.log("    Could not auto-detect IP."); }
+
+        console.log("\\n============================================");
         console.log("   INSTALLATION COMPLETE!");
-        console.log("   Access via: http://<YOUR_VPS_IP>:3001");
+        console.log("   Status: ONLINE");
+        console.log(\`   Access URL: http://\${publicIp}:3001\`);
+        console.log("--------------------------------------------");
+        console.log("   DEFAULT CREDENTIALS:");
+        console.log("   User: admin");
+        console.log("   Pass: admin123");
+        console.log("--------------------------------------------");
+        console.log("   MANAGEMENT CLI:");
+        console.log("   To recover passwords or uninstall, run:");
+        console.log("   npm run manage");
         console.log("============================================");
     } catch (e) {
         console.error(">>> ERROR DURING INSTALLATION:", e.message);
