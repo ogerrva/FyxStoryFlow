@@ -1,44 +1,42 @@
 #!/bin/bash
 
-# Menu interativo para gerenciar o FyxStoryFlow
-
 while true; do
     clear
     echo "========================================================"
-    echo "   FYX STORY FLOW - PAINEL DE CONTROLE (VPS)"
+    echo "   FYX STORY FLOW - MENU DE CONTROLE"
     echo "========================================================"
-    echo "1. 🟢 Status do Sistema"
-    echo "2. 📄 Ver Logs (API + Worker)"
-    echo "3. 🔄 Reiniciar Tudo"
-    echo "4. 🛑 Parar Tudo"
-    echo "5. 🗑️  Limpar Cache/Sessões (Correção de erros)"
+    echo "1. 🟢 Ver Status (PM2)"
+    echo "2. 📄 Logs em Tempo Real"
+    echo "3. 🔄 Reiniciar Serviços"
+    echo "4. 🛑 Parar Serviços"
+    echo "5. 🧹 Limpar Cache/Sessões (Reseta logins)"
     echo "6. 🚪 Sair"
     echo "========================================================"
-    read -p "Escolha uma opção: " choice
+    read -p "Opção: " choice
 
     case $choice in
         1)
             pm2 status
-            read -p "Pressione Enter para voltar..."
+            read -p "Enter para voltar..."
             ;;
         2)
-            pm2 logs --lines 50
+            pm2 logs --lines 20
             ;;
         3)
             pm2 restart all
-            echo "Sistema reiniciado!"
-            sleep 2
+            echo "Reiniciado."
+            sleep 1
             ;;
         4)
             pm2 stop all
-            echo "Sistema parado."
-            sleep 2
+            echo "Parado."
+            sleep 1
             ;;
         5)
-            echo "Limpando sessões antigas..."
-            rm -rf data/session_*.json
-            pm2 restart storyflow-worker
-            echo "Feito. Tente logar novamente pelo Dashboard."
+            echo "Deletando sessões salvas..."
+            rm -f data/session_*.json
+            pm2 restart worker
+            echo "Concluído. Faça login novamente no painel."
             sleep 2
             ;;
         6)
