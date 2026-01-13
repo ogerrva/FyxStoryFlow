@@ -1,42 +1,53 @@
 #!/bin/bash
 
+# Definição dos nomes dos serviços
+APP_API="fyx-api"
+APP_WORKER="fyx-worker"
+
 while true; do
     clear
     echo "========================================================"
-    echo "   FYX STORY FLOW - MENU DE CONTROLE"
+    echo "   FYX STORY FLOW - GERENCIADOR SEGURO"
     echo "========================================================"
-    echo "1. 🟢 Ver Status (PM2)"
+    echo "   Processos Alvo: $APP_API, $APP_WORKER"
+    echo "========================================================"
+    echo "1. 🟢 Ver Status (FyxStoryFlow)"
     echo "2. 📄 Logs em Tempo Real"
-    echo "3. 🔄 Reiniciar Serviços"
-    echo "4. 🛑 Parar Serviços"
-    echo "5. 🧹 Limpar Cache/Sessões (Reseta logins)"
+    echo "3. 🔄 Reiniciar Serviços FYX (Apenas)"
+    echo "4. 🛑 Parar Serviços FYX (Apenas)"
+    echo "5. 🧹 Limpar Sessões de Login (Instagram)"
     echo "6. 🚪 Sair"
     echo "========================================================"
     read -p "Opção: " choice
 
     case $choice in
         1)
-            pm2 status
+            # Mostra apenas os processos do Fyx
+            pm2 status | grep -E "fyx-api|fyx-worker|App name"
             read -p "Enter para voltar..."
             ;;
         2)
-            pm2 logs --lines 20
+            # Logs apenas do Fyx
+            pm2 logs $APP_API $APP_WORKER --lines 20
             ;;
         3)
-            pm2 restart all
-            echo "Reiniciado."
+            echo "Reiniciando $APP_API e $APP_WORKER..."
+            pm2 restart $APP_API $APP_WORKER
+            echo "Concluído."
             sleep 1
             ;;
         4)
-            pm2 stop all
+            echo "Parando $APP_API e $APP_WORKER..."
+            pm2 stop $APP_API $APP_WORKER
             echo "Parado."
             sleep 1
             ;;
         5)
-            echo "Deletando sessões salvas..."
+            echo "Deletando arquivos de sessão..."
             rm -f data/session_*.json
-            pm2 restart worker
-            echo "Concluído. Faça login novamente no painel."
+            echo "Reiniciando worker..."
+            pm2 restart $APP_WORKER
+            echo "Concluído. Será necessário logar novamente no painel."
             sleep 2
             ;;
         6)
