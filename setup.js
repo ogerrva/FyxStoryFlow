@@ -199,6 +199,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { GoogleGenAI } from "@google/genai";
 import { createServer } from 'http';
+import { chromium } from 'playwright'; // Added for login testing
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -265,22 +266,27 @@ app.get('/api/stories', authenticateToken, (req, res) => {
 });
 
 app.post('/api/stories', authenticateToken, upload.single('image'), (req, res) => {
-  const { ctaUrl, whatsappNumber, whatsappMessage, stickerText, caption, schedules, stickerX, stickerY, isRecurring } = req.body;
-  const id = Date.now().toString();
-  if (!req.file) return res.status(400).json({ error: 'Image is required' });
+  try {
+      const { ctaUrl, whatsappNumber, stickerText, caption, schedules, stickerX, stickerY, isRecurring } = req.body;
+      const id = Date.now().toString();
+      if (!req.file) return res.status(400).json({ error: 'Image is required' });
 
-  db.prepare(\`
-    INSERT INTO stories (
-      id, userId, imagePath, ctaUrl, whatsappNumber, whatsappMessage, stickerText,
-      caption, stickerX, stickerY, schedules, isRecurring, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
-  \`).run(
-    id, req.user.id, req.file.path, ctaUrl, whatsappNumber, whatsappMessage, 
-    stickerText || 'Saiba Mais', caption, parseInt(stickerX), parseInt(stickerY), 
-    schedules, isRecurring === 'true' ? 1 : 0
-  );
-  db.prepare("INSERT INTO logs (userId, level, message, module) VALUES (?, ?, ?, ?)").run(req.user.id, 'INFO', \`Story created: \${id}\`, 'API');
-  res.json({ success: true, id });
+      db.prepare(\`
+        INSERT INTO stories (
+          id, userId, imagePath, ctaUrl, whatsappNumber, whatsappMessage, stickerText,
+          caption, stickerX, stickerY, schedules, isRecurring, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+      \`).run(
+        id, req.user.id, req.file.path, ctaUrl, whatsappNumber, '', 
+        stickerText || 'Saiba Mais', caption, parseInt(stickerX), parseInt(stickerY), 
+        schedules, isRecurring === 'true' ? 1 : 0
+      );
+      db.prepare("INSERT INTO logs (userId, level, message, module) VALUES (?, ?, ?, ?)").run(req.user.id, 'INFO', \`Story created: \${id}\`, 'API');
+      res.json({ success: true, id });
+  } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: e.message });
+  }
 });
 
 app.delete('/api/stories/:id', authenticateToken, (req, res) => {
@@ -302,11 +308,7 @@ app.put('/api/stories/:id/share', authenticateToken, (req, res) => {
 app.post('/api/generate-caption', authenticateToken, async (req, res) => {
     try {
         const { image, context } = req.body;
-        
-        // 1. Try to get user's personal key
         const userSettings = db.prepare('SELECT value FROM user_settings WHERE userId = ? AND key = ?').get(req.user.id, 'gemini_api_key');
-        
-        // 2. Fallback to server key (if exists), otherwise null
         const apiKey = userSettings ? userSettings.value : process.env.API_KEY;
 
         if (!apiKey) {
@@ -330,6 +332,26 @@ app.post('/api/generate-caption', authenticateToken, async (req, res) => {
     } catch (e) {
         console.error("AI Error:", e.message);
         res.json({ caption: "Error: " + e.message });
+    }
+});
+
+// --- GEMINI CONNECTION TEST ---
+app.post('/api/settings/test-gemini', authenticateToken, async (req, res) => {
+    try {
+        const { apiKey } = req.body;
+        if (!apiKey) return res.json({ success: false, message: "Missing API Key" });
+
+        const ai = new GoogleGenAI({ apiKey });
+        // Simple test request to verify connectivity
+        await ai.models.generateContent({
+            model: 'gemini-2.5-flash-latest',
+            contents: { parts: [{ text: "Ping" }] }
+        });
+
+        res.json({ success: true, message: "Connected!" });
+    } catch (e) {
+        console.error("Gemini Test Error:", e);
+        res.json({ success: false, message: e.message || "Connection Failed" });
     }
 });
 
@@ -374,6 +396,7 @@ app.get('/api/logs', authenticateToken, (req, res) => {
   res.json(db.prepare(query).all(...params));
 });
 
+// --- SETTINGS & TEST LOGIN ---
 app.get('/api/settings', authenticateToken, (req, res) => {
     const rows = db.prepare('SELECT key, value FROM user_settings WHERE userId = ?').all(req.user.id);
     const settings = {};
@@ -392,6 +415,49 @@ app.post('/api/settings', authenticateToken, (req, res) => {
     res.json({ success: true });
 });
 
+app.post('/api/settings/test-login', authenticateToken, async (req, res) => {
+    const { username, password, proxy } = req.body;
+    let browser = null;
+    try {
+        console.log(\`Testing login for \${username}...\`);
+        browser = await chromium.launch({ 
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+        });
+        const context = await browser.newContext({ userAgent: 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36' });
+        const page = await context.newPage();
+        
+        await page.goto('https://www.instagram.com/accounts/login/', { timeout: 15000 });
+        await page.fill('input[name="username"]', username);
+        await page.fill('input[name="password"]', password);
+        await page.click('button[type="submit"]');
+        
+        // Wait for potential navigation or error
+        try {
+            await page.waitForLoadState('networkidle', { timeout: 8000 });
+        } catch(e) {}
+        
+        // Check for error element
+        const errorEl = await page.$('p[id="slfErrorAlert"]');
+        if (errorEl) {
+            throw new Error("Instagram: Incorrect password or username.");
+        }
+        
+        // Check for 2FA
+        if (await page.$('text=Two-Factor Authentication') || await page.$('input[name="verificationCode"]')) {
+             return res.json({ success: false, message: "2FA Required. Login verified, but code needed." });
+        }
+
+        // If we are here, it likely worked or asked for save info
+        res.json({ success: true, message: "Login Successful!" });
+    } catch (e) {
+        res.json({ success: false, message: e.message });
+    } finally {
+        if (browser) await browser.close();
+    }
+});
+
+// --- ADMIN USER MANAGEMENT ---
 app.get('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
     const users = db.prepare("SELECT id, username, role, createdAt FROM users").all();
     res.json(users);
@@ -403,6 +469,14 @@ app.post('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
         db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)").run(Date.now().toString(), username, hash, role || 'user');
         res.json({ success: true });
     } catch (e) { res.status(400).json({ error: "Username likely exists" }); }
+});
+app.put('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) => {
+    const { username, password } = req.body;
+    try {
+        if (username) db.prepare("UPDATE users SET username = ? WHERE id = ?").run(username, req.params.id);
+        if (password) db.prepare("UPDATE users SET password = ? WHERE id = ?").run(bcrypt.hashSync(password, 10), req.params.id);
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: "Error updating user" }); }
 });
 app.delete('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) => {
     db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
@@ -503,7 +577,7 @@ export const translations = {
     fileType: "PNG, JPG (Max 5MB)",
     enterLink: "URL...",
     storyDeleted: "Deleted.",
-    storyScheduledMsg: "Story scheduled.",
+    storyScheduledMsg: "Story scheduled successfully!",
     playwrightStart: "Initializing Playwright...",
     publishedSuccess: "Published successfully.",
     workerInitialized: "Worker initialized",
@@ -519,11 +593,14 @@ export const translations = {
     headless: "Headless Mode (No GUI)",
     headlessDesc: "Recommended for VPS (Linux CLI)",
     proxyDesc: "Format: http://user:pass@ip:port",
-    loginTest: "Test Login",
+    loginTest: "Test Login (Real-time)",
     architecture: "System Architecture",
-    apiKeyLabel: "Gemini API Key (Required for AI)",
+    apiKeyLabel: "Gemini API Key (Optional for AI)",
     getKeyLink: "Get Free Key",
-    apiKeyDesc: "Paste your Google AI Studio key here"
+    apiKeyDesc: "Paste your Google AI Studio key here",
+    testKey: "Test Connection",
+    apiConnected: "Connected to Gemini!",
+    apiError: "Connection Failed"
   },
   pt: {
     dashboard: "Painel",
@@ -549,7 +626,7 @@ export const translations = {
     generateCaption: "Gerar Legenda",
     analyzing: "Analisando...",
     whatsAppCta: "WhatsApp & Sticker",
-    phoneLabel: "Número (Ex: 5511999999999)",
+    phoneLabel: "Número",
     messageLabel: "Mensagem",
     stickerTextLabel: "Texto do Botão",
     stickerTextPlaceholder: "Ex: Chamar no Zap",
@@ -583,7 +660,7 @@ export const translations = {
     fileType: "PNG, JPG (Max 5MB)",
     enterLink: "URL...",
     storyDeleted: "Deletado.",
-    storyScheduledMsg: "Story agendado.",
+    storyScheduledMsg: "Story agendado com sucesso!",
     playwrightStart: "Iniciando Playwright...",
     publishedSuccess: "Publicado com sucesso.",
     workerInitialized: "Worker inicializado",
@@ -599,11 +676,14 @@ export const translations = {
     headless: "Modo Headless (Sem Interface)",
     headlessDesc: "Recomendado para VPS (Linux CLI)",
     proxyDesc: "Formato: http://user:pass@ip:port",
-    loginTest: "Testar Login",
+    loginTest: "Testar Login (Tempo Real)",
     architecture: "Arquitetura do Sistema",
-    apiKeyLabel: "Chave API Gemini (Necessária para IA)",
+    apiKeyLabel: "Chave API Gemini (Opcional para IA)",
     getKeyLink: "Gerar Chave Grátis",
-    apiKeyDesc: "Cole sua chave do Google AI Studio aqui"
+    apiKeyDesc: "Cole sua chave do Google AI Studio aqui",
+    testKey: "Testar Conexão",
+    apiConnected: "Conectado ao Gemini!",
+    apiError: "Falha na Conexão"
   }
 };
 
@@ -694,7 +774,6 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [waNumber, setWaNumber] = useState('');
-  // REMOVED waMessage state as per request
   const [stickerText, setStickerText] = useState('');
   const [generatedLink, setGeneratedLink] = useState('');
   const [tempDate, setTempDate] = useState('');
@@ -707,6 +786,14 @@ export default function App() {
   const [generatedCaption, setGeneratedCaption] = useState('');
   const [loading, setLoading] = useState(false);
   const [newUserMsg, setNewUserMsg] = useState('');
+  
+  // New State for API Key Testing
+  const [apiKeyStatus, setApiKeyStatus] = useState('');
+  
+  // Admin Edit State
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editUserNewName, setEditUserNewName] = useState('');
+  const [editUserNewPass, setEditUserNewPass] = useState('');
 
   const t = translations[lang];
 
@@ -745,7 +832,6 @@ export default function App() {
   useEffect(() => {
       if (!waNumber) { setGeneratedLink(''); return; }
       const cleanNum = waNumber.replace(/\\D/g, '');
-      // Link generation simplified: No message, just direct number
       setGeneratedLink(\`https://wa.me/\${cleanNum}\`);
   }, [waNumber]);
 
@@ -771,22 +857,34 @@ export default function App() {
   const handleImageClick = (e: React.MouseEvent<HTMLDivElement>) => { const rect = e.currentTarget.getBoundingClientRect(); const x = ((e.clientX - rect.left) / rect.width) * 100; const y = ((e.clientY - rect.top) / rect.height) * 100; setStickerPos({ x, y }); };
 
   const handleCreateStory = async () => {
-    if (!selectedFile || scheduleList.length === 0 || !waNumber) return;
+    if (!selectedFile || scheduleList.length === 0 || !waNumber) {
+        alert("Please upload an image, set a phone number, and at least one schedule.");
+        return;
+    }
     setLoading(true);
-    const formData = new FormData();
-    formData.append('image', selectedFile); 
-    formData.append('ctaUrl', generatedLink); 
-    formData.append('whatsappNumber', waNumber); 
-    // No whatsappMessage needed
-    formData.append('stickerText', stickerText); 
-    formData.append('caption', generatedCaption); 
-    formData.append('schedules', JSON.stringify(scheduleList)); 
-    formData.append('isRecurring', isRecurring.toString()); 
-    formData.append('stickerX', stickerPos.x.toString()); 
-    formData.append('stickerY', stickerPos.y.toString());
-    
-    await fetch(\`\${API_URL}/stories\`, { method: 'POST', headers: { 'Authorization': \`Bearer \${token}\` }, body: formData });
-    await fetchData(); setNewStoryImg(null); setSelectedFile(null); setScheduleList([]); setView('DASHBOARD'); setLoading(false);
+    try {
+        const formData = new FormData();
+        formData.append('image', selectedFile); 
+        formData.append('ctaUrl', generatedLink); 
+        formData.append('whatsappNumber', waNumber); 
+        formData.append('stickerText', stickerText); 
+        formData.append('caption', generatedCaption); 
+        formData.append('schedules', JSON.stringify(scheduleList)); 
+        formData.append('isRecurring', isRecurring.toString()); 
+        formData.append('stickerX', stickerPos.x.toString()); 
+        formData.append('stickerY', stickerPos.y.toString());
+        
+        const res = await fetch(\`\${API_URL}/stories\`, { method: 'POST', headers: { 'Authorization': \`Bearer \${token}\` }, body: formData });
+        if (!res.ok) throw new Error("Failed to create");
+        
+        await fetchData(); 
+        setNewStoryImg(null); setSelectedFile(null); setScheduleList([]); setView('DASHBOARD');
+        alert(t.storyScheduledMsg); 
+    } catch (e) {
+        alert("Error creating story.");
+    } finally {
+        setLoading(false);
+    }
   };
 
   const handleDelete = async (id: string) => { if(window.confirm(t.confirmDelete)) { await fetch(\`\${API_URL}/stories/\${id}\`, { method: 'DELETE', headers: { 'Authorization': \`Bearer \${token}\` } }); fetchData(); } };
@@ -796,6 +894,58 @@ export default function App() {
   const handleClone = async (id: string) => { await fetch(\`\${API_URL}/library/clone/\${id}\`, { method: 'POST', headers: { 'Authorization': \`Bearer \${token}\` } }); alert("Story copied to your Dashboard!"); };
   const fetchUsers = async () => { const res = await fetch(\`\${API_URL}/admin/users\`, { headers: { 'Authorization': \`Bearer \${token}\` } }); setUsersList(await res.json()); };
   const createUser = async (e: React.FormEvent) => { e.preventDefault(); const form = e.target as HTMLFormElement; const data = new FormData(form); const res = await fetch(\`\${API_URL}/admin/users\`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': \`Bearer \${token}\` }, body: JSON.stringify(Object.fromEntries(data)) }); if (res.ok) { setNewUserMsg("User Created"); fetchUsers(); form.reset(); } else setNewUserMsg("Error creating user"); };
+
+  const handleTestLogin = async () => {
+    setSettingsStatus("Testing login... please wait 10-20s...");
+    try {
+        const res = await fetch(\`\${API_URL}/settings/test-login\`, { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json', 'Authorization': \`Bearer \${token}\` },
+            body: JSON.stringify(settings)
+        });
+        const data = await res.json();
+        setSettingsStatus(data.success ? \`✅ \${data.message}\` : \`❌ \${data.message}\`);
+    } catch (e) {
+        setSettingsStatus("❌ Server Error");
+    }
+  };
+  
+  const handleTestGemini = async () => {
+    setApiKeyStatus("Testing...");
+    try {
+        const res = await fetch(\`\${API_URL}/settings/test-gemini\`, { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json', 'Authorization': \`Bearer \${token}\` },
+            body: JSON.stringify({ apiKey: settings.gemini_api_key })
+        });
+        const data = await res.json();
+        setApiKeyStatus(data.success ? "✅ " + t.apiConnected : "❌ " + data.message);
+    } catch (e) {
+        setApiKeyStatus("❌ " + t.apiError);
+    }
+  };
+
+  const handleUpdateUser = async () => {
+      if (!editingUser) return;
+      const body: any = {};
+      if (editUserNewName) body.username = editUserNewName;
+      if (editUserNewPass) body.password = editUserNewPass;
+      
+      const res = await fetch(\`\${API_URL}/admin/users/\${editingUser.id}\`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': \`Bearer \${token}\` },
+          body: JSON.stringify(body)
+      });
+      if(res.ok) {
+          alert("User updated");
+          setEditingUser(null);
+          setEditUserNewName('');
+          setEditUserNewPass('');
+          fetchUsers();
+      } else {
+          alert("Failed to update");
+      }
+  };
 
   if (view === 'LOGIN') {
       return (
@@ -870,16 +1020,30 @@ export default function App() {
 
           {view === 'ADMIN' && user?.role === 'admin' && (
               <div className="max-w-4xl mx-auto">
-                  <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl mb-8">
-                      <h3 className="text-xl font-bold text-white mb-4">Create User</h3>
-                      <form onSubmit={createUser} className="flex gap-4 items-end">
-                          <div><label className="block text-xs text-slate-400 mb-1">Username</label><input name="username" required className="bg-black border border-slate-700 rounded p-2 text-white" /></div>
-                          <div><label className="block text-xs text-slate-400 mb-1">Password</label><input name="password" required className="bg-black border border-slate-700 rounded p-2 text-white" /></div>
-                          <div><label className="block text-xs text-slate-400 mb-1">Role</label><select name="role" className="bg-black border border-slate-700 rounded p-2 text-white"><option value="user">User</option><option value="admin">Admin</option></select></div>
-                          <button className="bg-green-600 text-white px-4 py-2 rounded font-bold">Create</button>
-                      </form>
-                      {newUserMsg && <p className="text-green-400 mt-2 text-sm">{newUserMsg}</p>}
-                  </div>
+                  {editingUser ? (
+                      <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl mb-8 border-l-4 border-l-blue-500">
+                           <h3 className="text-xl font-bold text-white mb-4">Edit User: {editingUser.username}</h3>
+                           <div className="grid grid-cols-2 gap-4 mb-4">
+                               <div><label className="text-xs text-slate-400">New Username</label><input value={editUserNewName} onChange={e=>setEditUserNewName(e.target.value)} placeholder={editingUser.username} className="w-full bg-black border border-slate-700 p-2 rounded text-white" /></div>
+                               <div><label className="text-xs text-slate-400">New Password (leave empty to keep)</label><input type="text" value={editUserNewPass} onChange={e=>setEditUserNewPass(e.target.value)} placeholder="New Password" className="w-full bg-black border border-slate-700 p-2 rounded text-white" /></div>
+                           </div>
+                           <div className="flex gap-2">
+                               <button onClick={handleUpdateUser} className="bg-blue-600 px-4 py-2 rounded text-white font-bold">Save Changes</button>
+                               <button onClick={()=>setEditingUser(null)} className="bg-slate-700 px-4 py-2 rounded text-white">Cancel</button>
+                           </div>
+                      </div>
+                  ) : (
+                    <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl mb-8">
+                        <h3 className="text-xl font-bold text-white mb-4">Create User</h3>
+                        <form onSubmit={createUser} className="flex gap-4 items-end">
+                            <div><label className="block text-xs text-slate-400 mb-1">Username</label><input name="username" required className="bg-black border border-slate-700 rounded p-2 text-white" /></div>
+                            <div><label className="block text-xs text-slate-400 mb-1">Password</label><input name="password" required className="bg-black border border-slate-700 rounded p-2 text-white" /></div>
+                            <div><label className="block text-xs text-slate-400 mb-1">Role</label><select name="role" className="bg-black border border-slate-700 rounded p-2 text-white"><option value="user">User</option><option value="admin">Admin</option></select></div>
+                            <button className="bg-green-600 text-white px-4 py-2 rounded font-bold">Create</button>
+                        </form>
+                        {newUserMsg && <p className="text-green-400 mt-2 text-sm">{newUserMsg}</p>}
+                    </div>
+                  )}
                   <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
                       <table className="w-full text-left">
                           <thead className="bg-slate-800 text-slate-400 text-xs uppercase"><tr><th className="p-4">Username</th><th className="p-4">Role</th><th className="p-4">Created</th><th className="p-4">Action</th></tr></thead>
@@ -889,7 +1053,10 @@ export default function App() {
                                       <td className="p-4 font-bold text-white">{u.username}</td>
                                       <td className="p-4"><span className={\`px-2 py-1 rounded text-xs \${u.role === 'admin' ? 'bg-purple-500/20 text-purple-400' : 'bg-slate-700'}\`}>{u.role}</span></td>
                                       <td className="p-4 text-xs text-slate-500">{u.id.substring(0,8)}...</td>
-                                      <td className="p-4">{u.username !== 'admin' && (<button onClick={async () => { if(confirm('Delete user?')) { await fetch(\`\${API_URL}/admin/users/\${u.id}\`, { method: 'DELETE', headers: { 'Authorization': \`Bearer \${token}\` } }); fetchUsers(); } }} className="text-red-400 hover:underline text-sm">Delete</button>)}</td>
+                                      <td className="p-4 flex gap-2">
+                                          <button onClick={() => { setEditingUser(u); setEditUserNewName(u.username); setEditUserNewPass(''); }} className="text-blue-400 hover:underline text-sm">Edit</button>
+                                          {u.username !== 'admin' && (<button onClick={async () => { if(confirm('Delete user?')) { await fetch(\`\${API_URL}/admin/users/\${u.id}\`, { method: 'DELETE', headers: { 'Authorization': \`Bearer \${token}\` } }); fetchUsers(); } }} className="text-red-400 hover:underline text-sm">Delete</button>)}
+                                      </td>
                                   </tr>
                               ))}
                           </tbody>
@@ -910,8 +1077,6 @@ export default function App() {
                              <input placeholder={t.phoneLabel} value={waNumber} onChange={e=>setWaNumber(e.target.value)} className="bg-black border border-slate-700 rounded p-3 text-white focus:border-pink-500 outline-none" />
                              <input placeholder={t.stickerTextLabel} value={stickerText} onChange={e=>setStickerText(e.target.value)} className="bg-black border border-slate-700 rounded p-3 text-white focus:border-pink-500 outline-none" />
                          </div>
-                         {/* REMOVED MESSAGE TEXTAREA */}
-                         
                          <div className="bg-black/30 p-4 rounded-lg border border-slate-800">
                              <div className="flex gap-2 mb-2"><input type="datetime-local" value={tempDate} onChange={e=>setTempDate(e.target.value)} className="flex-1 bg-slate-900 border border-slate-700 rounded p-2 text-white [color-scheme:dark]" /><button onClick={handleAddSchedule} className="bg-slate-700 px-4 rounded text-white hover:bg-slate-600">+</button></div>
                              <div className="flex flex-wrap gap-2">{scheduleList.map(d => (<span key={d} className="bg-pink-900/30 text-pink-300 text-xs px-2 py-1 rounded flex items-center gap-1">{new Date(d).toLocaleString()} <button onClick={()=>removeSchedule(d)} className="hover:text-white">×</button></span>))}</div>
@@ -947,44 +1112,29 @@ export default function App() {
                           <label className="block text-slate-400 text-sm mb-1">{t.apiKeyLabel}</label>
                           <div className="flex gap-2">
                             <input className="flex-1 bg-black border border-slate-700 p-2 rounded text-white" type="password" placeholder="AIzaSy..." value={settings.gemini_api_key || ''} onChange={e => setSettings({...settings, gemini_api_key: e.target.value})} />
+                            <button onClick={handleTestGemini} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded text-sm font-bold flex items-center whitespace-nowrap transition-colors">{t.testKey}</button>
                             <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-bold flex items-center whitespace-nowrap transition-colors">{t.getKeyLink} ↗</a>
                           </div>
-                          <p className="text-xs text-slate-500 mt-1">{t.apiKeyDesc}</p>
+                          <p className="text-xs text-slate-500 mt-1">{apiKeyStatus || t.apiKeyDesc}</p>
                       </div>
 
                       <div className="flex items-center justify-between bg-black/30 p-3 rounded border border-slate-800 mt-4">
                           <div><div className="text-sm text-white font-bold">{t.headless}</div><div className="text-xs text-slate-500">{t.headlessDesc}</div></div>
                           <button onClick={() => setSettings({...settings, headless_mode: settings.headless_mode === 'true' ? 'false' : 'true'})} className={\`w-10 h-5 rounded-full relative transition-colors \${settings.headless_mode === 'true' ? 'bg-pink-600' : 'bg-slate-700'}\`}><div className={\`absolute top-1 w-3 h-3 bg-white rounded-full transition-all \${settings.headless_mode === 'true' ? 'left-6' : 'left-1'}\`} /></button>
                       </div>
-                      <button onClick={async () => { await fetch(\`\${API_URL}/settings\`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': \`Bearer \${token}\` }, body: JSON.stringify(settings) }); setSettingsStatus(t.saved); setTimeout(()=>setSettingsStatus(''), 2000); }} className="bg-white text-black px-6 py-2 rounded font-bold hover:bg-slate-200 transition-colors mt-4">{t.saveSettings}</button>
-                      {settingsStatus && <span className="text-green-400 ml-4">{settingsStatus}</span>}
+                      
+                      <div className="flex gap-4 mt-6">
+                        <button onClick={async () => { await fetch(\`\${API_URL}/settings\`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': \`Bearer \${token}\` }, body: JSON.stringify(settings) }); setSettingsStatus(t.saved); setTimeout(()=>setSettingsStatus(''), 2000); }} className="flex-1 bg-white text-black px-6 py-2 rounded font-bold hover:bg-slate-200 transition-colors">{t.saveSettings}</button>
+                        <button onClick={handleTestLogin} className="flex-1 bg-slate-800 border border-slate-700 text-white px-6 py-2 rounded font-bold hover:bg-slate-700 transition-colors">{t.loginTest}</button>
+                      </div>
+                      {settingsStatus && <div className={\`p-3 rounded mt-2 text-center font-bold \${settingsStatus.includes('✅') ? 'bg-green-500/20 text-green-400' : settingsStatus.includes('Testing') ? 'bg-blue-500/20 text-blue-400' : 'bg-red-500/20 text-red-400'}\`}>{settingsStatus}</div>}
                   </div>
                </div>
           )}
        </main>
     </div>
   );
-}`,
-  
-  // --- SERVICE: GEMINI (CORRECTED CLIENT-SIDE WRAPPER) ---
-  "src/services/geminiService.ts": `// Client-side wrapper calling backend
-export const generateStoryCaption = async (base64Image: string, context: string, token: string): Promise<string> => {
-  try {
-    const response = await fetch('/api/generate-caption', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': \`Bearer \${token}\`
-        },
-        body: JSON.stringify({ image: base64Image, context })
-    });
-    const data = await response.json();
-    return data.caption || "Check out this link!";
-  } catch (error) {
-    console.error("Caption Error:", error);
-    return "Click the link below!";
-  }
-};`
+}`
 };
 
 // --- 2. EXECUTION LOGIC ---
