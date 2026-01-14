@@ -48,7 +48,7 @@ let cachedIp = "Detecting...";
 // Fetch IP once at startup
 try {
     cachedIp = execSync('curl -s --connect-timeout 2 ifconfig.me').toString().trim();
-} catch(e) { cachedIp = "Unknown"; }
+} catch(e) { cachedIp = "Unknown (Check VPS)"; }
 
 const header = () => {
     console.clear();
@@ -57,7 +57,7 @@ const header = () => {
     console.log(C.FgCyan + "================================================" + C.Reset);
     
     // Get Active Port
-    let activePort = "3001 (Default)";
+    let activePort = "3001";
     try { 
         if (fs.existsSync(portPath)) {
             activePort = fs.readFileSync(portPath, 'utf8').trim();
@@ -76,9 +76,10 @@ const header = () => {
         if (worker && worker.pm2_env.status === 'online') workerStatus = C.FgGreen + "ONLINE" + C.Reset;
     } catch(e) {}
 
+    // --- DISPLAY INFO ---
     console.log(\` IP Address:     \${C.Bright}\${cachedIp}\${C.Reset}\`);
     console.log(\` Active Port:    \${C.Bright}\${activePort}\${C.Reset}\`);
-    console.log(\` Access URL:     http://\${cachedIp}:\${activePort}\`);
+    console.log(\` Access URL:     \${C.Bright}http://\${cachedIp}:\${activePort}\${C.Reset}\`);
     console.log(C.FgCyan + "------------------------------------------------" + C.Reset);
     console.log(\` API Service:    \${apiStatus}\`);
     console.log(\` Worker Engine:  \${workerStatus}\`);
@@ -300,11 +301,18 @@ app.put('/api/stories/:id/share', authenticateToken, (req, res) => {
 app.post('/api/generate-caption', authenticateToken, async (req, res) => {
     try {
         const { image, context } = req.body;
-        if (!process.env.API_KEY) {
-            return res.json({ caption: "API Key Not Configured in Server Environment" });
+        
+        // 1. Try to get user's personal key
+        const userSettings = db.prepare('SELECT value FROM user_settings WHERE userId = ? AND key = ?').get(req.user.id, 'gemini_api_key');
+        
+        // 2. Fallback to server key (if exists), otherwise null
+        const apiKey = userSettings ? userSettings.value : process.env.API_KEY;
+
+        if (!apiKey) {
+            return res.json({ caption: "Please configure Gemini API Key in Settings to use AI." });
         }
         
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const ai = new GoogleGenAI({ apiKey });
         const cleanBase64 = image.replace(/^data:image\\/(png|jpeg|jpg);base64,/, '');
         
         const response = await ai.models.generateContent({
@@ -320,7 +328,7 @@ app.post('/api/generate-caption', authenticateToken, async (req, res) => {
         res.json({ caption: response.text });
     } catch (e) {
         console.error("AI Error:", e.message);
-        res.json({ caption: "Error generating caption: " + e.message });
+        res.json({ caption: "Error: " + e.message });
     }
 });
 
@@ -372,13 +380,14 @@ app.get('/api/settings', authenticateToken, (req, res) => {
     res.json(settings);
 });
 app.post('/api/settings', authenticateToken, (req, res) => {
-    const { username, password, proxy, headless } = req.body;
+    const { username, password, proxy, headless, gemini_api_key } = req.body;
     const userId = req.user.id;
     const insert = db.prepare('INSERT OR REPLACE INTO user_settings (userId, key, value) VALUES (?, ?, ?)');
     if(username !== undefined) insert.run(userId, 'instagram_username', username);
     if(password !== undefined) insert.run(userId, 'instagram_password', password);
     if(proxy !== undefined) insert.run(userId, 'proxy_server', proxy);
     if(headless !== undefined) insert.run(userId, 'headless_mode', headless);
+    if(gemini_api_key !== undefined) insert.run(userId, 'gemini_api_key', gemini_api_key);
     res.json({ success: true });
 });
 
@@ -422,23 +431,234 @@ const startServer = (port) => {
 };
 startServer(DEFAULT_PORT);`,
 
-  "src/services/geminiService.ts": `// Client-side service calling backend
-export const generateStoryCaption = async (base64Image: string, context: string, token: string): Promise<string> => {
-  try {
-    const response = await fetch('/api/generate-caption', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': \`Bearer \${token}\`
-        },
-        body: JSON.stringify({ image: base64Image, context })
-    });
-    const data = await response.json();
-    return data.caption || "Check out this link!";
-  } catch (error) {
-    console.error("Caption Error:", error);
-    return "Click the link below!";
+  "src/types.ts": `export enum StoryStatus { PENDING = 'PENDING', PUBLISHING = 'PUBLISHING', PUBLISHED = 'PUBLISHED', FAILED = 'FAILED' }
+export interface User { id: string; username: string; role: 'admin' | 'user'; }
+export interface Story { id: string; imagePreview: string; ctaUrl: string; whatsappNumber?: string; whatsappMessage?: string; stickerText?: string; schedules: string[]; isRecurring: boolean; isShared: boolean; ownerName?: string; stickerPosition: { x: number; y: number }; status: StoryStatus; caption?: string; }
+export interface SystemLog { id: string; timestamp: string; level: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS'; message: string; module: 'API' | 'WORKER' | 'PLAYWRIGHT'; }
+export interface Stats { pendingCount: number; publishedCount: number; errorRate: number; nextRun: string | null; }
+export interface AppSettings { instagram_username?: string; instagram_password?: string; proxy_server?: string; headless_mode?: string; gemini_api_key?: string; }
+export type ViewState = 'LOGIN' | 'DASHBOARD' | 'CALENDAR' | 'CREATE' | 'LOGS' | 'HELP' | 'SETTINGS' | 'LIBRARY' | 'ADMIN';
+export type Language = 'en' | 'pt';
+export interface HelpArticle { id: string; title: string; content: string; tags: string[]; }`,
+
+  "src/locales.ts": `import { HelpArticle } from './types';
+
+export const translations = {
+  en: {
+    dashboard: "Dashboard",
+    newStory: "New Story",
+    calendar: "Calendar",
+    liveLogs: "Live Logs",
+    help: "Help",
+    settings: "Settings",
+    adminUser: "Admin User",
+    online: "Online",
+    pendingQueue: "Pending Queue",
+    published24h: "Published (24h)",
+    nextExecution: "Next Execution",
+    activeQueue: "Active Queue",
+    forceRun: "Force Run",
+    trash: "Trash",
+    confirmDelete: "Are you sure you want to delete this story?",
+    scheduleNewStory: "Schedule New Story",
+    storyImage: "Story Image (9:16)",
+    clickToUpload: "Click or Drag to upload",
+    dragAndDrop: "Drop image here",
+    aiAssistant: "AI Assistant",
+    generateCaption: "Generate Caption",
+    analyzing: "Analyzing...",
+    whatsAppCta: "WhatsApp & Sticker",
+    phoneLabel: "Phone Number",
+    messageLabel: "Message",
+    stickerTextLabel: "Sticker Button Text",
+    stickerTextPlaceholder: "e.g., Click to Chat",
+    previewLink: "Generated Link:",
+    stickerPosTitle: "Interactive Editor",
+    stickerPosDesc: "Drag the marker to position your sticker.",
+    scheduleTitle: "Scheduling",
+    addTime: "Add Time",
+    timeList: "Times",
+    noTimes: "No times set",
+    recurrenceLabel: "Repeat Daily",
+    recurrenceDesc: "Automatically repost every day at these times",
+    cancel: "Cancel",
+    scheduleAutomation: "Launch Automation",
+    viewNotImplemented: "View not implemented",
+    idle: "Idle",
+    queueEmpty: "No active automations.",
+    systemOutputStream: "System Output",
+    searchHelp: "Search...",
+    helpTitle: "Docs",
+    noResults: "No results.",
+    status: {
+      PENDING: "PENDING",
+      PUBLISHING: "PUBLISHING",
+      PUBLISHED: "PUBLISHED",
+      FAILED: "FAILED"
+    },
+    worker: "SYSTEM",
+    workerActive: "ONLINE",
+    language: "Language",
+    fileType: "PNG, JPG (Max 5MB)",
+    enterLink: "URL...",
+    storyDeleted: "Deleted.",
+    storyScheduledMsg: "Story scheduled.",
+    playwrightStart: "Initializing Playwright...",
+    publishedSuccess: "Published successfully.",
+    workerInitialized: "Worker initialized",
+    redisConnected: "Connected to DB",
+    sessionRestored: "Session restored",
+    tapToPosition: "Click to position",
+    settingsTitle: "System Configuration",
+    saveSettings: "Save Configuration",
+    saved: "Saved!",
+    igUser: "Instagram Username",
+    igPass: "Instagram Password",
+    proxy: "Proxy Server (Optional)",
+    headless: "Headless Mode (No GUI)",
+    headlessDesc: "Recommended for VPS (Linux CLI)",
+    proxyDesc: "Format: http://user:pass@ip:port",
+    loginTest: "Test Login",
+    architecture: "System Architecture",
+    apiKeyLabel: "Gemini API Key (Required for AI)",
+    getKeyLink: "Get Free Key",
+    apiKeyDesc: "Paste your Google AI Studio key here"
+  },
+  pt: {
+    dashboard: "Painel",
+    newStory: "Novo Story",
+    calendar: "Calendário",
+    liveLogs: "Logs Ao Vivo",
+    help: "Ajuda",
+    settings: "Configurações",
+    adminUser: "Administrador",
+    online: "Online",
+    pendingQueue: "Fila Pendente",
+    published24h: "Publicados (24h)",
+    nextExecution: "Próxima Execução",
+    activeQueue: "Fila Ativa",
+    forceRun: "Executar",
+    trash: "Excluir",
+    confirmDelete: "Tem certeza que deseja excluir este story?",
+    scheduleNewStory: "Agendar Novo Story",
+    storyImage: "Imagem do Story (9:16)",
+    clickToUpload: "Clique ou Arraste",
+    dragAndDrop: "Solte a imagem aqui",
+    aiAssistant: "Assistente IA",
+    generateCaption: "Gerar Legenda",
+    analyzing: "Analisando...",
+    whatsAppCta: "WhatsApp & Sticker",
+    phoneLabel: "Número (Ex: 5511999999999)",
+    messageLabel: "Mensagem",
+    stickerTextLabel: "Texto do Botão",
+    stickerTextPlaceholder: "Ex: Chamar no Zap",
+    previewLink: "Link:",
+    stickerPosTitle: "Editor Interativo",
+    stickerPosDesc: "Posicione onde o sticker vai aparecer.",
+    scheduleTitle: "Agendamento",
+    addTime: "Adicionar Horário",
+    timeList: "Horários",
+    noTimes: "Sem horários",
+    recurrenceLabel: "Repetir Diariamente",
+    recurrenceDesc: "Repostar todo dia nestes horários",
+    cancel: "Cancelar",
+    scheduleAutomation: "Lançar Automação",
+    viewNotImplemented: "Visualização não implementada",
+    idle: "Ocioso",
+    queueEmpty: "Nenhuma automação ativa.",
+    systemOutputStream: "Saída do Sistema",
+    searchHelp: "Buscar...",
+    helpTitle: "Documentação",
+    noResults: "Sem resultados.",
+    status: {
+      PENDING: "PENDENTE",
+      PUBLISHING: "PUBLICANDO",
+      PUBLISHED: "PUBLICADO",
+      FAILED: "FALHA"
+    },
+    worker: "SISTEMA",
+    workerActive: "ONLINE",
+    language: "Idioma",
+    fileType: "PNG, JPG (Max 5MB)",
+    enterLink: "URL...",
+    storyDeleted: "Deletado.",
+    storyScheduledMsg: "Story agendado.",
+    playwrightStart: "Iniciando Playwright...",
+    publishedSuccess: "Publicado com sucesso.",
+    workerInitialized: "Worker inicializado",
+    redisConnected: "Conectado ao DB",
+    sessionRestored: "Sessão restaurada",
+    tapToPosition: "Toque para posicionar",
+    settingsTitle: "Configuração do Sistema",
+    saveSettings: "Salvar Configurações",
+    saved: "Salvo!",
+    igUser: "Usuário do Instagram",
+    igPass: "Senha do Instagram",
+    proxy: "Servidor Proxy (Opcional)",
+    headless: "Modo Headless (Sem Interface)",
+    headlessDesc: "Recomendado para VPS (Linux CLI)",
+    proxyDesc: "Formato: http://user:pass@ip:port",
+    loginTest: "Testar Login",
+    architecture: "Arquitetura do Sistema",
+    apiKeyLabel: "Chave API Gemini (Necessária para IA)",
+    getKeyLink: "Gerar Chave Grátis",
+    apiKeyDesc: "Cole sua chave do Google AI Studio aqui"
   }
+};
+
+export const helpContent: Record<'en' | 'pt', HelpArticle[]> = {
+  en: [
+    {
+      id: '1',
+      title: 'Initial Setup on VPS',
+      tags: ['install', 'vps', 'linux'],
+      content: '1. Access your VPS via SSH.\\n2. Ensure Node.js is installed.\\n3. Run \`npm install\` to download dependencies.\\n4. IMPORTANT: Run \`npx playwright install\` to download the browser binaries for your architecture (x64 or ARM64).\\n5. Start the system with \`npm start\`.\\n6. Go to the Settings tab and enter your Instagram credentials.'
+    },
+    {
+      id: '2',
+      title: 'Creating a Recurring Story',
+      tags: ['create', 'recurring'],
+      content: 'To create a story that repeats every day:\\n1. Upload your image.\\n2. Configure the WhatsApp link.\\n3. In the "Scheduling" section, toggle "Repeat Daily" ON.\\n4. Select the TIME you want it to post. The date part is ignored for recurring posts, only the time is used.'
+    },
+    {
+      id: '3',
+      title: 'Headless Mode',
+      tags: ['headless', 'config'],
+      content: 'If you are running on a server without a monitor (VPS), you MUST enable "Headless Mode" in Settings. This allows the browser to run invisibly in the background. If disabled on a VPS, the worker will fail to launch.'
+    },
+    {
+      id: '4',
+      title: 'How to get Gemini API Key',
+      tags: ['api', 'key', 'gemini'],
+      content: '1. Click the "Get Free Key" button in Settings or go to aistudio.google.com.\\n2. Sign in with your Google Account.\\n3. Click "Create API Key" or "Get API Key".\\n4. Copy the key starting with "AIza...".\\n5. Paste it into the Settings field in FyxStoryFlow and Save.'
+    }
+  ],
+  pt: [
+    {
+      id: '1',
+      title: 'Configuração Inicial na VPS',
+      tags: ['instalação', 'vps', 'linux'],
+      content: '1. Acesse sua VPS via SSH.\\n2. Garanta que o Node.js está instalado.\\n3. Execute \`npm install\` para baixar as dependências.\\n4. IMPORTANTE: Execute \`npx playwright install\` para baixar os binários do navegador compatíveis com sua arquitetura (x64 ou ARM64).\\n5. Inicie o sistema com \`npm start\`.\\n6. Vá para a aba Configurações e insira suas credenciais do Instagram.'
+    },
+    {
+      id: '2',
+      title: 'Criando Story Recorrente',
+      tags: ['criar', 'recorrência'],
+      content: 'Para criar um story que se repete todo dia:\\n1. Envie sua imagem.\\n2. Configure o link do WhatsApp.\\n3. Na seção "Agendamento", ative a opção "Repetir Diariamente".\\n4. Selecione o HORÁRIO que deseja postar. A data é ignorada para posts recorrentes, apenas a hora é usada.'
+    },
+    {
+      id: '3',
+      title: 'Modo Headless',
+      tags: ['headless', 'configuração'],
+      content: 'Se você está rodando em um servidor sem monitor (VPS), você DEVE ativar o "Modo Headless" nas Configurações. Isso permite que o navegador rode invisível em segundo plano. Se desativado em uma VPS, o worker falhará ao iniciar.'
+    },
+    {
+      id: '4',
+      title: 'Como criar chave API Gemini',
+      tags: ['api', 'chave', 'ia', 'gemini'],
+      content: '1. Clique no botão "Gerar Chave Grátis" nas Configurações ou acesse aistudio.google.com.\\n2. Faça login com sua conta Google.\\n3. Clique em "Create API Key" (Criar Chave).\\n4. Copie o código que começa com "AIza...".\\n5. Cole no campo "Chave API Gemini" nas configurações do FyxStoryFlow e salve.'
+    }
+  ]
 };`,
 
   "src/App.tsx": `import React, { useState, useEffect } from 'react';
@@ -473,7 +693,7 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [waNumber, setWaNumber] = useState('');
-  const [waMessage, setWaMessage] = useState('');
+  // REMOVED waMessage state as per request
   const [stickerText, setStickerText] = useState('');
   const [generatedLink, setGeneratedLink] = useState('');
   const [tempDate, setTempDate] = useState('');
@@ -524,9 +744,9 @@ export default function App() {
   useEffect(() => {
       if (!waNumber) { setGeneratedLink(''); return; }
       const cleanNum = waNumber.replace(/\\D/g, '');
-      const encodedMsg = encodeURIComponent(waMessage);
-      setGeneratedLink(\`https://wa.me/\${cleanNum}?text=\${encodedMsg}\`);
-  }, [waNumber, waMessage]);
+      // Link generation simplified: No message, just direct number
+      setGeneratedLink(\`https://wa.me/\${cleanNum}\`);
+  }, [waNumber]);
 
   const handleFileUpload = (file: File) => {
     if (file && file.type.startsWith('image/')) { setSelectedFile(file); const reader = new FileReader(); reader.onloadend = () => setNewStoryImg(reader.result as string); reader.readAsDataURL(file); }
@@ -553,7 +773,17 @@ export default function App() {
     if (!selectedFile || scheduleList.length === 0 || !waNumber) return;
     setLoading(true);
     const formData = new FormData();
-    formData.append('image', selectedFile); formData.append('ctaUrl', generatedLink); formData.append('whatsappNumber', waNumber); formData.append('whatsappMessage', waMessage); formData.append('stickerText', stickerText); formData.append('caption', generatedCaption); formData.append('schedules', JSON.stringify(scheduleList)); formData.append('isRecurring', isRecurring.toString()); formData.append('stickerX', stickerPos.x.toString()); formData.append('stickerY', stickerPos.y.toString());
+    formData.append('image', selectedFile); 
+    formData.append('ctaUrl', generatedLink); 
+    formData.append('whatsappNumber', waNumber); 
+    // No whatsappMessage needed
+    formData.append('stickerText', stickerText); 
+    formData.append('caption', generatedCaption); 
+    formData.append('schedules', JSON.stringify(scheduleList)); 
+    formData.append('isRecurring', isRecurring.toString()); 
+    formData.append('stickerX', stickerPos.x.toString()); 
+    formData.append('stickerY', stickerPos.y.toString());
+    
     await fetch(\`\${API_URL}/stories\`, { method: 'POST', headers: { 'Authorization': \`Bearer \${token}\` }, body: formData });
     await fetchData(); setNewStoryImg(null); setSelectedFile(null); setScheduleList([]); setView('DASHBOARD'); setLoading(false);
   };
@@ -679,7 +909,8 @@ export default function App() {
                              <input placeholder={t.phoneLabel} value={waNumber} onChange={e=>setWaNumber(e.target.value)} className="bg-black border border-slate-700 rounded p-3 text-white focus:border-pink-500 outline-none" />
                              <input placeholder={t.stickerTextLabel} value={stickerText} onChange={e=>setStickerText(e.target.value)} className="bg-black border border-slate-700 rounded p-3 text-white focus:border-pink-500 outline-none" />
                          </div>
-                         <textarea placeholder={t.messageLabel} value={waMessage} onChange={e=>setWaMessage(e.target.value)} rows={2} className="w-full bg-black border border-slate-700 rounded p-3 text-white focus:border-pink-500 outline-none resize-none" />
+                         {/* REMOVED MESSAGE TEXTAREA */}
+                         
                          <div className="bg-black/30 p-4 rounded-lg border border-slate-800">
                              <div className="flex gap-2 mb-2"><input type="datetime-local" value={tempDate} onChange={e=>setTempDate(e.target.value)} className="flex-1 bg-slate-900 border border-slate-700 rounded p-2 text-white [color-scheme:dark]" /><button onClick={handleAddSchedule} className="bg-slate-700 px-4 rounded text-white hover:bg-slate-600">+</button></div>
                              <div className="flex flex-wrap gap-2">{scheduleList.map(d => (<span key={d} className="bg-pink-900/30 text-pink-300 text-xs px-2 py-1 rounded flex items-center gap-1">{new Date(d).toLocaleString()} <button onClick={()=>removeSchedule(d)} className="hover:text-white">×</button></span>))}</div>
@@ -710,11 +941,21 @@ export default function App() {
                   <div className="space-y-4">
                       <div><label className="block text-slate-400 text-sm mb-1">{t.igUser}</label><input className="w-full bg-black border border-slate-700 p-2 rounded text-white" value={settings.instagram_username || ''} onChange={e => setSettings({...settings, instagram_username: e.target.value})} /></div>
                       <div><label className="block text-slate-400 text-sm mb-1">{t.igPass}</label><input type="password" className="w-full bg-black border border-slate-700 p-2 rounded text-white" value={settings.instagram_password || ''} onChange={e => setSettings({...settings, instagram_password: e.target.value})} /></div>
-                      <div className="flex items-center justify-between bg-black/30 p-3 rounded border border-slate-800">
+                      
+                      <div className="border-t border-slate-800 pt-4 mt-4">
+                          <label className="block text-slate-400 text-sm mb-1">{t.apiKeyLabel}</label>
+                          <div className="flex gap-2">
+                            <input className="flex-1 bg-black border border-slate-700 p-2 rounded text-white" type="password" placeholder="AIzaSy..." value={settings.gemini_api_key || ''} onChange={e => setSettings({...settings, gemini_api_key: e.target.value})} />
+                            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-bold flex items-center whitespace-nowrap transition-colors">{t.getKeyLink} ↗</a>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1">{t.apiKeyDesc}</p>
+                      </div>
+
+                      <div className="flex items-center justify-between bg-black/30 p-3 rounded border border-slate-800 mt-4">
                           <div><div className="text-sm text-white font-bold">{t.headless}</div><div className="text-xs text-slate-500">{t.headlessDesc}</div></div>
                           <button onClick={() => setSettings({...settings, headless_mode: settings.headless_mode === 'true' ? 'false' : 'true'})} className={\`w-10 h-5 rounded-full relative transition-colors \${settings.headless_mode === 'true' ? 'bg-pink-600' : 'bg-slate-700'}\`}><div className={\`absolute top-1 w-3 h-3 bg-white rounded-full transition-all \${settings.headless_mode === 'true' ? 'left-6' : 'left-1'}\`} /></button>
                       </div>
-                      <button onClick={async () => { await fetch(\`\${API_URL}/settings\`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': \`Bearer \${token}\` }, body: JSON.stringify(settings) }); setSettingsStatus(t.saved); setTimeout(()=>setSettingsStatus(''), 2000); }} className="bg-white text-black px-6 py-2 rounded font-bold hover:bg-slate-200 transition-colors">{t.saveSettings}</button>
+                      <button onClick={async () => { await fetch(\`\${API_URL}/settings\`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': \`Bearer \${token}\` }, body: JSON.stringify(settings) }); setSettingsStatus(t.saved); setTimeout(()=>setSettingsStatus(''), 2000); }} className="bg-white text-black px-6 py-2 rounded font-bold hover:bg-slate-200 transition-colors mt-4">{t.saveSettings}</button>
                       {settingsStatus && <span className="text-green-400 ml-4">{settingsStatus}</span>}
                   </div>
                </div>
