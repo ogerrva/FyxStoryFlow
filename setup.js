@@ -18,15 +18,23 @@ import bcrypt from 'bcryptjs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
-import { execSync, exec } from 'child_process';
+import { execSync } from 'child_process';
 import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dbPath = path.join(__dirname, 'data/storyflow.db');
+const portPath = path.join(__dirname, 'data/port.txt');
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const question = (query) => new Promise((resolve) => rl.question(query, resolve));
+
+// --- PREVENT MENU CRASH ON CTRL+C ---
+if (process.platform !== "win32") {
+    process.on('SIGINT', () => {
+        process.stdout.write("\\n\\x1b[33mReturning to menu...\\x1b[0m\\n");
+    });
+}
 
 // --- COLORS ---
 const C = {
@@ -35,23 +43,45 @@ const C = {
     BgBlue: "\\x1b[44m"
 };
 
+let cachedIp = "Detecting...";
+
+// Fetch IP once at startup
+try {
+    cachedIp = execSync('curl -s --connect-timeout 2 ifconfig.me').toString().trim();
+} catch(e) { cachedIp = "Unknown"; }
+
 const header = () => {
     console.clear();
     console.log(C.FgCyan + "================================================" + C.Reset);
     console.log(C.Bright + "      FYX STORY FLOW - ENTERPRISE MANAGER       " + C.Reset);
     console.log(C.FgCyan + "================================================" + C.Reset);
+    
+    // Get Active Port
+    let activePort = "3001 (Default)";
+    try { 
+        if (fs.existsSync(portPath)) {
+            activePort = fs.readFileSync(portPath, 'utf8').trim();
+        }
+    } catch(e) {}
+
+    // Get Service Status
+    let apiStatus = C.FgRed + "OFFLINE" + C.Reset;
+    let workerStatus = C.FgRed + "OFFLINE" + C.Reset;
     try {
         const statusApi = execSync("pm2 jlist").toString();
         const processes = JSON.parse(statusApi);
         const api = processes.find(p => p.name === 'fyx-api');
         const worker = processes.find(p => p.name === 'fyx-worker');
-        
-        const apiStatus = api && api.pm2_env.status === 'online' ? C.FgGreen + "ONLINE" + C.Reset : C.FgRed + "OFFLINE" + C.Reset;
-        const workerStatus = worker && worker.pm2_env.status === 'online' ? C.FgGreen + "ONLINE" + C.Reset : C.FgRed + "OFFLINE" + C.Reset;
-        
-        console.log(\` API Service:    \${apiStatus}\`);
-        console.log(\` Worker Engine:  \${workerStatus}\`);
-    } catch(e) { console.log(C.FgYellow + " PM2 Status:     Unknown (PM2 not running?)" + C.Reset); }
+        if (api && api.pm2_env.status === 'online') apiStatus = C.FgGreen + "ONLINE" + C.Reset;
+        if (worker && worker.pm2_env.status === 'online') workerStatus = C.FgGreen + "ONLINE" + C.Reset;
+    } catch(e) {}
+
+    console.log(\` IP Address:     \${C.Bright}\${cachedIp}\${C.Reset}\`);
+    console.log(\` Active Port:    \${C.Bright}\${activePort}\${C.Reset}\`);
+    console.log(\` Access URL:     http://\${cachedIp}:\${activePort}\`);
+    console.log(C.FgCyan + "------------------------------------------------" + C.Reset);
+    console.log(\` API Service:    \${apiStatus}\`);
+    console.log(\` Worker Engine:  \${workerStatus}\`);
     console.log(C.FgCyan + "------------------------------------------------" + C.Reset);
 };
 
@@ -60,16 +90,19 @@ const wait = (ms) => new Promise(res => setTimeout(res, ms));
 const main = async () => {
     while (true) {
         header();
-        console.log(C.Bright + " MAINTENANCE & OPERATIONS:" + C.Reset);
-        console.log(" [1] 📄 View Live Logs (Press Ctrl+C to exit logs)");
-        console.log(" [2] 🔄 Restart All Services");
-        console.log(" [3] 🏗️  Update/Rebuild Application (Apply Code Changes)");
-        console.log(" [4] 🔧 Force Repair/Reinstall (Fix Dependencies & Browsers)");
+        console.log(C.Bright + " MONITORING:" + C.Reset);
+        console.log(" [1] 📺 Live Logs Stream (Press Ctrl+C to Return)");
+        console.log(" [2] 📸 Log Snapshot (Last 100 lines)");
         console.log("");
-        console.log(C.Bright + " CONFIGURATION & SECURITY:" + C.Reset);
-        console.log(" [5] 👤 User Management (Reset Password / Create Admin)");
-        console.log(" [6] 🌐 Firewall & Network Diagnostics");
-        console.log(" [7] 🗑️  UNINSTALL SYSTEM COMPLETELY");
+        console.log(C.Bright + " MAINTENANCE:" + C.Reset);
+        console.log(" [3] 🔄 Restart Services");
+        console.log(" [4] 🏗️  Update/Rebuild (Apply Code Changes)");
+        console.log(" [5] 🔧 Force Repair (Reinstall Node Modules)");
+        console.log("");
+        console.log(C.Bright + " CONFIGURATION:" + C.Reset);
+        console.log(" [6] 👤 User Management");
+        console.log(" [7] 🌐 Network & Firewall Check (Ports 3000-4000)");
+        console.log(" [8] 🗑️  UNINSTALL SYSTEM");
         console.log("");
         console.log(" [0] Exit");
         console.log(C.FgCyan + "------------------------------------------------" + C.Reset);
@@ -77,356 +110,84 @@ const main = async () => {
         const answer = await question(" Select option: ");
         
         try {
-            // --- 1. LOGS ---
             if (answer === '1') {
-                console.log(C.FgYellow + ">> Streaming logs..." + C.Reset);
-                try { execSync('pm2 logs --lines 50', { stdio: 'inherit' }); } catch(e) {}
+                console.log(C.FgYellow + ">> Streaming logs... Press Ctrl+C to return." + C.Reset);
+                try { execSync('pm2 logs', { stdio: 'inherit' }); } catch(e) {}
             }
-            
-            // --- 2. RESTART ---
             else if (answer === '2') {
-                console.log(C.FgYellow + ">> Restarting PM2 Services..." + C.Reset);
+                console.log(C.FgYellow + ">> Last 100 lines:" + C.Reset);
+                try { execSync('pm2 logs --lines 100 --nostream', { stdio: 'inherit' }); } catch(e) {}
+                await question("\\nPress Enter...");
+            }
+            else if (answer === '3') {
+                console.log(">> Restarting...");
                 execSync('pm2 restart all', { stdio: 'inherit' });
-                console.log(C.FgGreen + ">> Done." + C.Reset);
                 await wait(2000);
             }
-
-            // --- 3. UPDATE / REBUILD ---
-            else if (answer === '3') {
-                console.log(C.FgCyan + ">> Starting Build Process..." + C.Reset);
-                console.log(">> Installing any new dependencies...");
-                execSync('npm install', { stdio: 'inherit' });
-                console.log(">> Compiling Frontend...");
-                execSync('npm run build', { stdio: 'inherit' });
-                console.log(">> Reloading Services...");
-                execSync('pm2 reload all', { stdio: 'inherit' });
-                console.log(C.FgGreen + ">> Update Complete." + C.Reset);
-                await question("Press Enter to continue...");
-            }
-
-            // --- 4. REPAIR / REINSTALL ---
             else if (answer === '4') {
-                console.log(C.FgRed + "⚠️  WARNING: This will delete 'node_modules' and re-download everything." + C.Reset);
-                const conf = await question("Type 'YES' to proceed: ");
-                if (conf === 'YES') {
-                    console.log(">> Cleaning old files...");
-                    execSync('rm -rf node_modules package-lock.json dist', { stdio: 'inherit' });
-                    console.log(">> Installing Dependencies (this may take time)...");
-                    execSync('npm install', { stdio: 'inherit' });
-                    console.log(">> Installing Playwright Browsers...");
-                    execSync('npx playwright install chromium --with-deps', { stdio: 'inherit' });
-                    console.log(">> Building App...");
-                    execSync('npm run build', { stdio: 'inherit' });
-                    console.log(">> Restarting...");
-                    execSync('pm2 restart all', { stdio: 'inherit' });
-                    console.log(C.FgGreen + ">> System Repaired." + C.Reset);
-                } else { console.log("Cancelled."); }
-                await question("Press Enter to continue...");
+                console.log(">> Updating...");
+                execSync('npm install', { stdio: 'inherit' });
+                console.log(">> Building...");
+                execSync('npm run build', { stdio: 'inherit' });
+                console.log(">> Restarting...");
+                execSync('pm2 restart all', { stdio: 'inherit' });
+                console.log(C.FgGreen + ">> Complete." + C.Reset);
+                await question("Press Enter...");
             }
-
-            // --- 5. USER MANAGEMENT ---
             else if (answer === '5') {
-                console.log("\\n [A] Reset 'admin' Password");
-                console.log(" [B] Create New Admin User");
-                const sub = (await question(" Select: ")).toUpperCase();
-                
+                if ((await question("Type 'YES' to delete node_modules: ")) === 'YES') {
+                    execSync('rm -rf node_modules package-lock.json dist', { stdio: 'inherit' });
+                    execSync('npm install', { stdio: 'inherit' });
+                    execSync('npx playwright install chromium --with-deps', { stdio: 'inherit' });
+                    execSync('npm run build', { stdio: 'inherit' });
+                    execSync('pm2 restart all', { stdio: 'inherit' });
+                }
+                await question("Press Enter...");
+            }
+            else if (answer === '6') {
+                const sub = (await question("\\n[A] Reset Admin Pass  [B] New Admin User: ")).toUpperCase();
                 const db = new Database(dbPath);
                 if (sub === 'A') {
-                    const newPass = await question("Enter new password for 'admin': ");
-                    if(newPass) {
-                        const hash = bcrypt.hashSync(newPass, 10);
-                        db.prepare("UPDATE users SET password = ? WHERE username = 'admin'").run(hash);
-                        console.log(C.FgGreen + ">> Password updated." + C.Reset);
-                    }
+                    const p = await question("New Password: ");
+                    if(p) db.prepare("UPDATE users SET password = ? WHERE username = 'admin'").run(bcrypt.hashSync(p, 10));
                 } else if (sub === 'B') {
-                    const user = await question("Enter new username: ");
-                    const pass = await question("Enter password: ");
-                    if(user && pass) {
-                        const hash = bcrypt.hashSync(pass, 10);
-                        try {
-                            db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)").run(Date.now().toString(), user, hash, 'admin');
-                            console.log(C.FgGreen + ">> Admin user created." + C.Reset);
-                        } catch(e) { console.log(C.FgRed + ">> Error: Username likely exists." + C.Reset); }
+                    const u = await question("User: "); const p = await question("Pass: ");
+                    if(u && p) {
+                        try { db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)").run(Date.now().toString(), u, bcrypt.hashSync(p, 10), 'admin'); }
+                        catch(e) { console.log("User exists."); }
                     }
                 }
-                await wait(2000);
+                await wait(1000);
             }
-
-            // --- 6. NETWORK DIAGNOSTICS ---
-            else if (answer === '6') {
-                console.log(C.FgYellow + ">> Checking Network Config..." + C.Reset);
-                try {
-                    const ip = execSync('curl -s ifconfig.me --connect-timeout 5').toString().trim();
-                    console.log(\`>> Public IP detected: \${C.Bright}\${ip}\${C.Reset}\`);
-                } catch(e) { console.log(">> Could not detect Public IP."); }
-
-                console.log(">> Re-applying Firewall Rules (Ports 3000-3005)...");
-                try { execSync('ufw allow 3000:3005/tcp', { stdio: 'ignore' }); console.log("   - UFW: OK"); } catch(e) {}
-                try { execSync('iptables -A INPUT -p tcp --match multiport --dports 3000:3005 -j ACCEPT', { stdio: 'ignore' }); console.log("   - IPTables: OK"); } catch(e) {}
-                
-                console.log(C.FgGreen + ">> Network diagnostics done." + C.Reset);
-                await question("Press Enter to continue...");
-            }
-
-            // --- 7. UNINSTALL ---
             else if (answer === '7') {
-                console.log(C.BgBlue + C.Bright + " UNINSTALL SYSTEM " + C.Reset);
-                const confirm = await question("TYPE 'DELETE' TO CONFIRM PERMANENT REMOVAL: ");
-                if (confirm === 'DELETE') {
-                    console.log(">> Stopping Services...");
+                console.log(">> Opening ports 3000-4000...");
+                try { execSync('ufw allow 3000:4000/tcp', { stdio: 'inherit' }); } catch(e){}
+                try { execSync('iptables -I INPUT -p tcp --match multiport --dports 3000:4000 -j ACCEPT', { stdio: 'ignore' }); } catch(e){}
+                try { execSync('netfilter-persistent save', { stdio: 'ignore' }); } catch(e){}
+                console.log(C.FgGreen + ">> Done." + C.Reset);
+                await question("Press Enter...");
+            }
+            else if (answer === '8') {
+                if ((await question("TYPE 'DELETE' TO CONFIRM: ")) === 'DELETE') {
                     try { execSync('pm2 delete fyx-api', { stdio: 'ignore' }); } catch(e){}
                     try { execSync('pm2 delete fyx-worker', { stdio: 'ignore' }); } catch(e){}
-                    
-                    console.log(">> Closing Firewall Ports...");
-                    try { execSync('ufw delete allow 3000:3005/tcp', { stdio: 'inherit' }); } catch(e) {}
-                    try { execSync('iptables -D INPUT -p tcp --match multiport --dports 3000:3005 -j ACCEPT', { stdio: 'ignore' }); } catch(e) {}
-                    
-                    console.log(">> Removing Global Command...");
                     try { fs.unlinkSync('/usr/local/bin/flow-menu'); } catch(e){}
-                    
-                    console.log(C.FgRed + ">> To finish removing files, run: cd .. && rm -rf " + __dirname + C.Reset);
+                    console.log(C.FgRed + ">> Uninstalled. Run: cd .. && rm -rf " + __dirname + C.Reset);
                     process.exit(0);
                 }
             }
-
-            // --- EXIT ---
-            else if (answer === '0') {
-                console.clear();
-                process.exit(0);
-            }
+            else if (answer === '0') process.exit(0);
         } catch (e) {
             console.log(C.FgRed + "Error: " + e.message + C.Reset);
-            await question("Press Enter to continue...");
+            await question("Press Enter...");
         }
     }
 };
 
 main();`,
 
-  "package.json": `{
-  "name": "fyx-story-flow",
-  "version": "3.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "server": "node server/index.js",
-    "worker": "node server/worker.js",
-    "start": "npm run build && concurrently \\"npm run server\\" \\"npm run worker\\"",
-    "postinstall": "npx playwright install --with-deps",
-    "manage": "node manage.js"
-  },
-  "dependencies": {
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "@google/genai": "^1.35.0",
-    "express": "^4.18.2",
-    "better-sqlite3": "^9.4.3",
-    "playwright": "^1.57.0",
-    "cors": "^2.8.5",
-    "multer": "^1.4.5-lts.1",
-    "dotenv": "^16.4.5",
-    "node-cron": "^3.0.3",
-    "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2",
-    "concurrently": "^8.2.2"
-  },
-  "devDependencies": {
-    "@types/react": "^18.2.66",
-    "@types/react-dom": "^18.2.22",
-    "@vitejs/plugin-react": "^4.2.1",
-    "typescript": "^5.2.2",
-    "vite": "^5.2.0",
-    "autoprefixer": "^10.4.19",
-    "postcss": "^8.4.38",
-    "tailwindcss": "^3.4.3",
-    "@types/better-sqlite3": "^7.6.9",
-    "@types/express": "^4.17.21",
-    "@types/bcryptjs": "^2.4.6",
-    "@types/jsonwebtoken": "^9.0.6"
-  }
-}`,
-
-  "vite.config.ts": `import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
-  },
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-        secure: false,
-      },
-    },
-  },
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true,
-  },
-});`,
-
-  "tsconfig.json": `{
-  "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "skipLibCheck": true,
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "react-jsx",
-    "strict": true,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
-    "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
-  },
-  "include": ["src"],
-  "references": [{ "path": "./tsconfig.node.json" }]
-}`,
-
-  "tsconfig.node.json": `{
-  "compilerOptions": {
-    "composite": true,
-    "skipLibCheck": true,
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true
-  },
-  "include": ["vite.config.ts"]
-}`,
-
-  "tailwind.config.js": `/** @type {import('tailwindcss').Config} */
-export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-    "./components/**/*.{js,ts,jsx,tsx}"
-  ],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-}`,
-
-  "postcss.config.js": `export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-}`,
-
-  "index.html": `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FyxStoryFlow | Instagram Automation</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-      body { font-family: 'Inter', sans-serif; }
-      ::-webkit-scrollbar { width: 8px; height: 8px; }
-      ::-webkit-scrollbar-track { background: #0f172a; }
-      ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-      ::-webkit-scrollbar-thumb:hover { background: #475569; }
-    </style>
-  </head>
-  <body class="bg-slate-950 text-slate-200">
-    <div id="root"></div>
-    <script type="module" src="/src/index.tsx"></script>
-  </body>
-</html>`,
-
-  "server/db.js": `import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
-import bcrypt from 'bcryptjs';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const dataDir = path.join(__dirname, '../data');
-
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-
-const db = new Database(path.join(dataDir, 'storyflow.db'));
-
-db.exec(\`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    role TEXT DEFAULT 'user',
-    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS user_settings (
-    userId TEXT,
-    key TEXT,
-    value TEXT,
-    PRIMARY KEY (userId, key),
-    FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS stories (
-    id TEXT PRIMARY KEY,
-    userId TEXT,
-    imagePath TEXT NOT NULL,
-    ctaUrl TEXT,
-    whatsappNumber TEXT,
-    whatsappMessage TEXT,
-    stickerText TEXT,
-    caption TEXT,
-    stickerX INTEGER,
-    stickerY INTEGER,
-    schedules TEXT, 
-    isRecurring INTEGER DEFAULT 0,
-    isShared INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'PENDING',
-    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    userId TEXT,
-    level TEXT,
-    message TEXT,
-    module TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-\`);
-
-try { db.prepare("ALTER TABLE stories ADD COLUMN userId TEXT").run(); } catch (e) {}
-try { db.prepare("ALTER TABLE stories ADD COLUMN isShared INTEGER DEFAULT 0").run(); } catch (e) {}
-try { db.prepare("ALTER TABLE logs ADD COLUMN userId TEXT").run(); } catch (e) {}
-
-const adminExists = db.prepare("SELECT id FROM users WHERE username = 'admin'").get();
-if (!adminExists) {
-    const hash = bcrypt.hashSync('admin123', 10);
-    db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)").run('admin_id', 'admin', hash, 'admin');
-    console.log("Admin account created: user=admin pass=admin123");
-}
-export default db;`,
-
-  "server/index.js": `import express from 'express';
+  "server/index.js": `import 'dotenv/config';
+import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import path from 'path';
@@ -435,6 +196,7 @@ import db from './db.js';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { GoogleGenAI } from "@google/genai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -443,11 +205,14 @@ const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || 'fyx_secret_key_change_me_in_prod';
 const DEFAULT_PORT = process.env.PORT || 3001;
 
+// Directories
+const uploadDir = path.join(__dirname, '../uploads');
+const dataDir = path.join(__dirname, '../data');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
 app.use(cors());
 app.use(express.json());
-
-const uploadDir = path.join(__dirname, '../uploads');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 app.use('/uploads', express.static(uploadDir));
 app.use(express.static(path.join(__dirname, '../dist')));
 
@@ -473,6 +238,7 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
+// --- AUTH & API ROUTES ---
 app.post('/api/auth/login', (req, res) => {
     const { username, password } = req.body;
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
@@ -528,6 +294,34 @@ app.put('/api/stories/:id/share', authenticateToken, (req, res) => {
     const { isShared } = req.body;
     db.prepare("UPDATE stories SET isShared = ? WHERE id = ? AND userId = ?").run(isShared ? 1 : 0, req.params.id, req.user.id);
     res.json({ success: true });
+});
+
+// --- AI CAPTION GENERATION (BACKEND) ---
+app.post('/api/generate-caption', authenticateToken, async (req, res) => {
+    try {
+        const { image, context } = req.body;
+        if (!process.env.API_KEY) {
+            return res.json({ caption: "API Key Not Configured in Server Environment" });
+        }
+        
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const cleanBase64 = image.replace(/^data:image\\/(png|jpeg|jpg);base64,/, '');
+        
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-latest',
+            contents: {
+                parts: [
+                    { inlineData: { data: cleanBase64, mimeType: 'image/jpeg' } },
+                    { text: 'Write a short caption (max 10 words) for Instagram Story. Context: ' + context }
+                ]
+            }
+        });
+        
+        res.json({ caption: response.text });
+    } catch (e) {
+        console.error("AI Error:", e.message);
+        res.json({ caption: "Error generating caption: " + e.message });
+    }
 });
 
 app.get('/api/library', authenticateToken, (req, res) => {
@@ -610,529 +404,41 @@ app.get('*', (req, res) => {
 });
 
 const startServer = (port) => {
-    const server = app.listen(port, () => { console.log(\`Server running on http://localhost:\${port}\`); })
+    if (port > 4000) {
+        console.error("CRITICAL: No free ports found between 3001 and 4000.");
+        process.exit(1);
+    }
+    const server = app.listen(port, '0.0.0.0', () => { 
+        console.log(\`Server running on http://0.0.0.0:\${port}\`);
+        try { fs.writeFileSync(path.join(dataDir, 'port.txt'), port.toString()); } catch(e){}
+    })
     .on('error', (err) => {
-        if (err.code === 'EADDRINUSE') { startServer(port + 1); } 
+        if (err.code === 'EADDRINUSE') { 
+            console.log(\`Port \${port} is busy, trying \${port + 1}...\`); 
+            startServer(port + 1); 
+        } 
         else { console.error(err); }
     });
 };
 startServer(DEFAULT_PORT);`,
 
-  "server/worker.js": `import { chromium } from 'playwright';
-import db from './db.js';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DATA_DIR = path.join(__dirname, '../data');
-const CHECK_INTERVAL_MS = 60000; 
-
-const log = (userId, level, message) => {
-    console.log(\`[\${level}] \${message}\`);
-    try { db.prepare("INSERT INTO logs (userId, level, message, module) VALUES (?, ?, ?, ?)").run(userId, level, message, 'WORKER'); } catch (e) {}
-};
-
-async function getUserSettings(userId) {
-    const rows = db.prepare("SELECT key, value FROM user_settings WHERE userId = ?").all(userId);
-    const settings = {};
-    rows.forEach(r => settings[r.key] = r.value);
-    return settings;
-}
-
-async function login(page, username, password, userId) {
-    log(userId, 'INFO', \`Attempting Login for \${username}...\`);
-    await page.goto('https://www.instagram.com/accounts/login/');
-    try {
-        await page.waitForSelector('input[name="username"]', { timeout: 15000 });
-        await page.fill('input[name="username"]', username);
-        await page.fill('input[name="password"]', password);
-        await page.click('button[type="submit"]');
-        await page.waitForLoadState('networkidle');
-        await page.waitForTimeout(5000);
-        if (await page.$('text=Two-Factor Authentication')) throw new Error("2FA Required");
-        if (await page.$('p[id="slfErrorAlert"]')) throw new Error("Incorrect Password or Username");
-        log(userId, 'SUCCESS', 'Login credentials submitted');
-        const sessionPath = path.join(DATA_DIR, \`session_\${userId}.json\`);
-        await page.context().storageState({ path: sessionPath });
-    } catch (e) { log(userId, 'WARN', 'Login flow warning: ' + e.message); }
-}
-
-async function processStory(story) {
-    log(story.userId, 'INFO', \`Processing story: \${story.id}\`);
-    const settings = await getUserSettings(story.userId);
-    let HEADLESS = true;
-    if (settings.headless_mode === 'false' || settings.headless_mode === false) HEADLESS = false;
-    const PROXY = settings.proxy_server ? { server: settings.proxy_server } : undefined;
-    let browser = null;
-    try {
-        browser = await chromium.launch({ 
-            headless: HEADLESS, 
-            proxy: PROXY, 
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] 
-        });
-        const sessionPath = path.join(DATA_DIR, \`session_\${story.userId}.json\`);
-        const context = await browser.newContext({
-            ...chromium.devices['Pixel 5'], locale: 'pt-BR',
-            storageState: fs.existsSync(sessionPath) ? sessionPath : undefined,
-            userAgent: 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36'
-        });
-        const page = await context.newPage();
-        const username = settings.instagram_username;
-        const password = settings.instagram_password;
-        if (!username || !password) throw new Error("No credentials configured");
-
-        await login(page, username, password, story.userId);
-        await page.goto('https://www.instagram.com/');
-        try { await page.click('text=Not Now', { timeout: 5000 }); } catch (e) {}
-        try { await page.click('text=Cancel', { timeout: 5000 }); } catch (e) {}
-
-        log(story.userId, 'INFO', 'Uploading image...');
-        const fileChooserPromise = page.waitForEvent('filechooser');
-        let clicked = false;
-        const selectors = ['div[role="button"]:has-text("Your Story")', 'svg[aria-label="New Story"]', 'a[href="/create/story/"]'];
-        for (const sel of selectors) { if (await page.$(sel)) { await page.click(sel); clicked = true; break; } }
-        if (!clicked) await page.getByRole('button', { name: 'Story' }).first().click().catch(() => {});
-        
-        const fileChooser = await fileChooserPromise;
-        let absoluteImagePath = story.imagePath;
-        if (!path.isAbsolute(story.imagePath)) absoluteImagePath = path.resolve(story.imagePath);
-        if (!fs.existsSync(absoluteImagePath)) throw new Error(\`Image file not found: \${absoluteImagePath}\`);
-        await fileChooser.setFiles(absoluteImagePath);
-        await page.waitForTimeout(6000); 
-
-        log(story.userId, 'INFO', 'Placing sticker...');
-        const viewport = page.viewportSize();
-        if (viewport && story.ctaUrl) {
-            await page.mouse.click(viewport.width * 0.5, viewport.height * 0.5); 
-            await page.keyboard.type(story.ctaUrl); 
-            await page.waitForTimeout(1000);
-            await page.mouse.click(viewport.width * 0.5, viewport.height * 0.9); 
-        }
-
-        log(story.userId, 'INFO', 'Clicking publish...');
-        await page.click('text=Your Story'); 
-        await page.waitForTimeout(10000); 
-        log(story.userId, 'SUCCESS', \`Story \${story.id} Published!\`);
-        
-        const schedules = JSON.parse(story.schedules);
-        const now = new Date();
-        let nextSchedules = schedules.filter(s => new Date(s) > now);
-        if (story.isRecurring === 1) {
-            const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
-            nextSchedules.push(tomorrow.toISOString());
-        }
-        if (nextSchedules.length === 0 && story.isRecurring !== 1) {
-            db.prepare("UPDATE stories SET status = 'PUBLISHED', schedules = ? WHERE id = ?").run(JSON.stringify([]), story.id);
-        } else {
-            db.prepare("UPDATE stories SET status = 'PENDING', schedules = ? WHERE id = ?").run(JSON.stringify(nextSchedules), story.id);
-        }
-    } catch (error) {
-        log(story.userId, 'ERROR', \`Failed: \${error.message}\`);
-        db.prepare("UPDATE stories SET status = 'FAILED' WHERE id = ?").run(story.id);
-        try { if (browser) await browser.contexts()[0]?.pages()[0]?.screenshot({ path: path.join(DATA_DIR, \`error_\${story.id}.png\`) }); } catch(e){}
-    } finally {
-        if (browser) await browser.close();
-    }
-}
-async function runWorker() {
-    try {
-        const stories = db.prepare("SELECT * FROM stories WHERE status = 'PENDING'").all();
-        for (const story of stories) {
-            const schedules = JSON.parse(story.schedules);
-            if (!schedules || schedules.length === 0) continue;
-            const due = schedules.some(s => new Date(s) <= new Date());
-            if (due) await processStory(story);
-        }
-    } catch (e) { console.error("Worker Loop Error:", e); }
-}
-setInterval(runWorker, CHECK_INTERVAL_MS);
-log('system', 'INFO', 'Worker Service Started');
-runWorker();`,
-
-  "src/index.tsx": `import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-const rootElement = document.getElementById('root');
-if (!rootElement) throw new Error("Could not find root element");
-const root = ReactDOM.createRoot(rootElement);
-root.render(<React.StrictMode><App /></React.StrictMode>);`,
-
-  "src/types.ts": `export enum StoryStatus { PENDING = 'PENDING', PUBLISHING = 'PUBLISHING', PUBLISHED = 'PUBLISHED', FAILED = 'FAILED' }
-export interface User { id: string; username: string; role: 'admin' | 'user'; }
-export interface Story { id: string; imagePreview: string; ctaUrl: string; whatsappNumber?: string; whatsappMessage?: string; stickerText?: string; schedules: string[]; isRecurring: boolean; isShared: boolean; ownerName?: string; stickerPosition: { x: number; y: number }; status: StoryStatus; caption?: string; }
-export interface SystemLog { id: string; timestamp: string; level: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS'; message: string; module: 'API' | 'WORKER' | 'PLAYWRIGHT'; }
-export interface Stats { pendingCount: number; publishedCount: number; errorRate: number; nextRun: string | null; }
-export interface AppSettings { instagram_username?: string; instagram_password?: string; proxy_server?: string; headless_mode?: string; }
-export type ViewState = 'LOGIN' | 'DASHBOARD' | 'CALENDAR' | 'CREATE' | 'LOGS' | 'HELP' | 'SETTINGS' | 'LIBRARY' | 'ADMIN';
-export type Language = 'en' | 'pt';
-export interface HelpArticle { id: string; title: string; content: string; tags: string[]; }`,
-
-  "src/locales.ts": `import { HelpArticle } from './types';
-
-export const translations = {
-  en: {
-    dashboard: "Dashboard",
-    newStory: "New Story",
-    calendar: "Calendar",
-    liveLogs: "Live Logs",
-    help: "Help",
-    settings: "Settings",
-    adminUser: "Admin User",
-    online: "Online",
-    pendingQueue: "Pending Queue",
-    published24h: "Published (24h)",
-    nextExecution: "Next Execution",
-    activeQueue: "Active Queue",
-    forceRun: "Force Run",
-    trash: "Trash",
-    confirmDelete: "Are you sure you want to delete this story?",
-    scheduleNewStory: "Schedule New Story",
-    storyImage: "Story Image (9:16)",
-    clickToUpload: "Click or Drag to upload",
-    dragAndDrop: "Drop image here",
-    aiAssistant: "AI Assistant",
-    generateCaption: "Generate Caption",
-    analyzing: "Analyzing...",
-    whatsAppCta: "WhatsApp & Sticker",
-    phoneLabel: "Phone Number",
-    messageLabel: "Message",
-    stickerTextLabel: "Sticker Button Text",
-    stickerTextPlaceholder: "e.g., Click to Chat",
-    previewLink: "Generated Link:",
-    stickerPosTitle: "Interactive Editor",
-    stickerPosDesc: "Drag the marker to position your sticker.",
-    scheduleTitle: "Scheduling",
-    addTime: "Add Time",
-    timeList: "Times",
-    noTimes: "No times set",
-    recurrenceLabel: "Repeat Daily",
-    recurrenceDesc: "Automatically repost every day at these times",
-    cancel: "Cancel",
-    scheduleAutomation: "Launch Automation",
-    viewNotImplemented: "View not implemented",
-    idle: "Idle",
-    queueEmpty: "No active automations.",
-    systemOutputStream: "System Output",
-    searchHelp: "Search...",
-    helpTitle: "Docs",
-    noResults: "No results.",
-    status: {
-      PENDING: "PENDING",
-      PUBLISHING: "PUBLISHING",
-      PUBLISHED: "PUBLISHED",
-      FAILED: "FAILED"
-    },
-    worker: "SYSTEM",
-    workerActive: "ONLINE",
-    language: "Language",
-    fileType: "PNG, JPG (Max 5MB)",
-    enterLink: "URL...",
-    storyDeleted: "Deleted.",
-    storyScheduledMsg: "Story scheduled.",
-    playwrightStart: "Initializing Playwright...",
-    publishedSuccess: "Published successfully.",
-    workerInitialized: "Worker initialized",
-    redisConnected: "Connected to DB",
-    sessionRestored: "Session restored",
-    tapToPosition: "Click to position",
-    settingsTitle: "System Configuration",
-    saveSettings: "Save Configuration",
-    saved: "Saved!",
-    igUser: "Instagram Username",
-    igPass: "Instagram Password",
-    proxy: "Proxy Server (Optional)",
-    headless: "Headless Mode (No GUI)",
-    headlessDesc: "Recommended for VPS (Linux CLI)",
-    proxyDesc: "Format: http://user:pass@ip:port",
-    loginTest: "Test Login",
-    architecture: "System Architecture"
-  },
-  pt: {
-    dashboard: "Painel",
-    newStory: "Novo Story",
-    calendar: "Calendário",
-    liveLogs: "Logs Ao Vivo",
-    help: "Ajuda",
-    settings: "Configurações",
-    adminUser: "Administrador",
-    online: "Online",
-    pendingQueue: "Fila Pendente",
-    published24h: "Publicados (24h)",
-    nextExecution: "Próxima Execução",
-    activeQueue: "Fila Ativa",
-    forceRun: "Executar",
-    trash: "Excluir",
-    confirmDelete: "Tem certeza que deseja excluir este story?",
-    scheduleNewStory: "Agendar Novo Story",
-    storyImage: "Imagem do Story (9:16)",
-    clickToUpload: "Clique ou Arraste",
-    dragAndDrop: "Solte a imagem aqui",
-    aiAssistant: "Assistente IA",
-    generateCaption: "Gerar Legenda",
-    analyzing: "Analisando...",
-    whatsAppCta: "WhatsApp & Sticker",
-    phoneLabel: "Número",
-    messageLabel: "Mensagem",
-    stickerTextLabel: "Texto do Botão",
-    stickerTextPlaceholder: "Ex: Chamar no Zap",
-    previewLink: "Link:",
-    stickerPosTitle: "Editor Interativo",
-    stickerPosDesc: "Posicione onde o sticker vai aparecer.",
-    scheduleTitle: "Agendamento",
-    addTime: "Adicionar Horário",
-    timeList: "Horários",
-    noTimes: "Sem horários",
-    recurrenceLabel: "Repetir Diariamente",
-    recurrenceDesc: "Repostar todo dia nestes horários",
-    cancel: "Cancelar",
-    scheduleAutomation: "Lançar Automação",
-    viewNotImplemented: "Visualização não implementada",
-    idle: "Ocioso",
-    queueEmpty: "Nenhuma automação ativa.",
-    systemOutputStream: "Saída do Sistema",
-    searchHelp: "Buscar...",
-    helpTitle: "Documentação",
-    noResults: "Sem resultados.",
-    status: {
-      PENDING: "PENDENTE",
-      PUBLISHING: "PUBLICANDO",
-      PUBLISHED: "PUBLICADO",
-      FAILED: "FALHA"
-    },
-    worker: "SISTEMA",
-    workerActive: "ONLINE",
-    language: "Idioma",
-    fileType: "PNG, JPG (Max 5MB)",
-    enterLink: "URL...",
-    storyDeleted: "Deletado.",
-    storyScheduledMsg: "Story agendado.",
-    playwrightStart: "Iniciando Playwright...",
-    publishedSuccess: "Publicado com sucesso.",
-    workerInitialized: "Worker inicializado",
-    redisConnected: "Conectado ao DB",
-    sessionRestored: "Sessão restaurada",
-    tapToPosition: "Toque para posicionar",
-    settingsTitle: "Configuração do Sistema",
-    saveSettings: "Salvar Configurações",
-    saved: "Salvo!",
-    igUser: "Usuário do Instagram",
-    igPass: "Senha do Instagram",
-    proxy: "Servidor Proxy (Opcional)",
-    headless: "Modo Headless (Sem Interface)",
-    headlessDesc: "Recomendado para VPS (Linux CLI)",
-    proxyDesc: "Formato: http://user:pass@ip:port",
-    loginTest: "Testar Login",
-    architecture: "Arquitetura do Sistema"
-  }
-};
-
-export const helpContent = {
-  en: [
-    {
-      id: '1',
-      title: 'Initial Setup on VPS',
-      tags: ['install', 'vps', 'linux'],
-      content: '1. Access your VPS via SSH.\\n2. Ensure Node.js is installed.\\n3. Run \`npm install\` to download dependencies.\\n4. IMPORTANT: Run \`npx playwright install\` to download the browser binaries for your architecture (x64 or ARM64).\\n5. Start the system with \`npm start\`.\\n6. Go to the Settings tab and enter your Instagram credentials.'
-    },
-    {
-      id: '2',
-      title: 'Creating a Recurring Story',
-      tags: ['create', 'recurring'],
-      content: 'To create a story that repeats every day:\\n1. Upload your image.\\n2. Configure the WhatsApp link.\\n3. In the "Scheduling" section, toggle "Repeat Daily" ON.\\n4. Select the TIME you want it to post. The date part is ignored for recurring posts, only the time is used.'
-    },
-    {
-      id: '3',
-      title: 'Headless Mode',
-      tags: ['headless', 'config'],
-      content: 'If you are running on a server without a monitor (VPS), you MUST enable "Headless Mode" in Settings. This allows the browser to run invisibly in the background. If disabled on a VPS, the worker will fail to launch.'
-    }
-  ],
-  pt: [
-    {
-      id: '1',
-      title: 'Configuração Inicial na VPS',
-      tags: ['instalação', 'vps', 'linux'],
-      content: '1. Acesse sua VPS via SSH.\\n2. Garanta que o Node.js está instalado.\\n3. Execute \`npm install\` para baixar as dependências.\\n4. IMPORTANTE: Execute \`npx playwright install\` para baixar os binários do navegador compatíveis com sua arquitetura (x64 or ARM64).\\n5. Inicie o sistema com \`npm start\`.\\n6. Vá para a aba Configurações e insira suas credenciais do Instagram.'
-    },
-    {
-      id: '2',
-      title: 'Criando Story Recorrente',
-      tags: ['criar', 'recorrência'],
-      content: 'Para criar um story que se repete todo dia:\\n1. Envie sua imagem.\\n2. Configure o link do WhatsApp.\\n3. Na seção "Agendamento", ative a opção "Repetir Diariamente".\\n4. Selecione o HORÁRIO que deseja postar. A data é ignorada para posts recorrentes, apenas a hora é usada.'
-    },
-    {
-      id: '3',
-      title: 'Modo Headless',
-      tags: ['headless', 'configuração'],
-      content: 'Se você está rodando em um servidor sem monitor (VPS), você DEVE ativar o "Modo Headless" nas Configurações. Isso permite que o navegador rode invisível em segundo plano. Se desativado em uma VPS, o worker falhará ao iniciar.'
-    }
-  ]
-};`,
-
-  "src/services/geminiService.ts": `import { GoogleGenAI } from "@google/genai";
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-export const generateStoryCaption = async (base64Image: string, context: string): Promise<string> => {
+  "src/services/geminiService.ts": `// Client-side service calling backend
+export const generateStoryCaption = async (base64Image: string, context: string, token: string): Promise<string> => {
   try {
-    const cleanBase64 = base64Image.replace(/^data:image\\/(png|jpeg|jpg);base64,/, '');
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: { parts: [{ inlineData: { data: cleanBase64, mimeType: 'image/jpeg' } }, { text: 'Write a short caption (max 10 words). Context: ' + context }] },
+    const response = await fetch('/api/generate-caption', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': \`Bearer \${token}\`
+        },
+        body: JSON.stringify({ image: base64Image, context })
     });
-    return response.text || "Check out this link!";
-  } catch (error) { return "Click the link below!"; }
-};`,
-
-  "src/components/LogTerminal.tsx": `import React, { useEffect, useRef } from 'react';
-import { SystemLog, Language } from '../types';
-import { translations } from '../locales';
-
-interface LogTerminalProps { logs: SystemLog[]; lang: Language; }
-
-export const LogTerminal: React.FC<LogTerminalProps> = ({ logs, lang }) => {
-  const endRef = useRef<HTMLDivElement>(null);
-  const t = translations[lang];
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
-
-  const getColor = (level: string) => {
-    switch (level) {
-      case 'INFO': return 'text-blue-400';
-      case 'WARN': return 'text-yellow-400';
-      case 'ERROR': return 'text-red-500';
-      case 'SUCCESS': return 'text-green-400';
-      default: return 'text-gray-300';
-    }
-  };
-
-  return (
-    <div className="bg-slate-950 rounded-lg shadow-xl border border-slate-800 flex flex-col h-[500px] font-mono text-sm overflow-hidden">
-      <div className="bg-slate-900 px-4 py-2 border-b border-slate-800 flex justify-between items-center">
-        <span className="text-slate-400 text-xs uppercase tracking-widest">{t.systemOutputStream} // storyflow-worker-1</span>
-        <div className="flex gap-2">
-          <div className="w-3 h-3 rounded-full bg-red-500/20 border border-red-500"></div>
-          <div className="w-3 h-3 rounded-full bg-yellow-500/20 border border-yellow-500"></div>
-          <div className="w-3 h-3 rounded-full bg-green-500/20 border border-green-500"></div>
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-1">
-        {logs.map((log) => (
-          <div key={log.id} className="flex gap-3">
-            <span className="text-slate-500 shrink-0">[{new Date(log.timestamp).toLocaleTimeString(lang === 'pt' ? 'pt-BR' : 'en-US')}]</span>
-            <span className={\`font-bold shrink-0 w-16 \${getColor(log.level)}\`}>{log.level}</span>
-            <span className="text-slate-300 break-all">{log.module}: {log.message}</span>
-          </div>
-        ))}
-        <div ref={endRef} />
-      </div>
-    </div>
-  );
-};`,
-
-  "src/components/StoryCard.tsx": `import React from 'react';
-import { Story, StoryStatus, Language } from '../types';
-import { translations } from '../locales';
-
-interface StoryCardProps {
-  story: Story;
-  onDelete: (id: string) => void;
-  onRunNow: (id: string) => void;
-  lang: Language;
-}
-
-export const StoryCard: React.FC<StoryCardProps> = ({ story, onDelete, onRunNow, lang }) => {
-  const t = translations[lang];
-
-  const getStatusBadge = (status: StoryStatus) => {
-    const base = "px-2 py-1 rounded text-xs font-bold tracking-wider";
-    const label = t.status[status];
-    switch (status) {
-      case StoryStatus.PUBLISHED: return <span className={\`\${base} bg-green-500/10 text-green-500 border border-green-500/20\`}>{label}</span>;
-      case StoryStatus.PENDING: return <span className={\`\${base} bg-blue-500/10 text-blue-500 border border-blue-500/20\`}>{label}</span>;
-      case StoryStatus.PUBLISHING: return <span className={\`\${base} bg-amber-500/10 text-amber-500 border border-amber-500/20 animate-pulse\`}>{label}</span>;
-      case StoryStatus.FAILED: return <span className={\`\${base} bg-red-500/10 text-red-500 border border-red-500/20\`}>{label}</span>;
-      default: return <span className={base}>{label}</span>;
-    }
-  };
-
-  const upcomingSchedules = story.schedules.filter(d => new Date(d) > new Date()).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
-  const nextRun = upcomingSchedules[0];
-  const totalRemaining = upcomingSchedules.length;
-
-  return (
-    <div className="bg-slate-800 rounded-lg p-4 border border-slate-700 flex flex-col sm:flex-row gap-4 hover:border-slate-600 transition-colors">
-      <div className="w-full sm:w-24 h-40 sm:h-32 bg-slate-900 rounded overflow-hidden flex-shrink-0 relative group">
-        <img src={story.imagePreview} alt="Story" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
-        <div className="absolute w-2 h-2 bg-green-500 rounded-full border border-white shadow-sm" style={{ left: \`\${story.stickerPosition.x}%\`, top: \`\${story.stickerPosition.y}%\` }} />
-      </div>
-      <div className="flex-1 flex flex-col justify-between">
-        <div>
-          <div className="flex justify-between items-start mb-2">
-            {getStatusBadge(story.status)}
-            <span className="text-slate-400 text-xs">{nextRun ? new Date(nextRun).toLocaleString(lang === 'pt' ? 'pt-BR' : 'en-US') : 'Done'}</span>
-          </div>
-          <h4 className="text-white font-medium truncate mb-1" title={story.caption}>{story.caption || '...'}</h4>
-          <div className="flex flex-col gap-1">
-             <a href={story.ctaUrl} target="_blank" rel="noreferrer" className="text-cyan-400 text-sm hover:underline truncate block">🔗 {story.whatsappNumber ? \`+\${story.whatsappNumber}\` : 'Link'}</a>
-             {totalRemaining > 1 && (<span className="text-xs text-purple-400 bg-purple-400/10 px-1.5 py-0.5 rounded w-fit">+\${totalRemaining - 1} {lang === 'pt' ? 'agendamentos extras' : 'more schedules'}</span>)}
-          </div>
-        </div>
-        <div className="flex gap-2 mt-4 sm:mt-0 justify-end">
-           {story.status === StoryStatus.PENDING && (<button onClick={() => onRunNow(story.id)} className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded shadow-lg shadow-cyan-900/20 transition-all active:scale-95">► {t.forceRun}</button>)}
-           <button onClick={() => onDelete(story.id)} className="px-3 py-1.5 bg-slate-700 hover:bg-red-900/30 hover:text-red-400 text-slate-300 text-sm rounded transition-all">{t.trash}</button>
-        </div>
-      </div>
-    </div>
-  );
-};`,
-
-  "src/components/HelpPage.tsx": `import React, { useState } from 'react';
-import { translations, helpContent } from '../locales';
-import { Language } from '../types';
-
-interface HelpPageProps { lang: Language; }
-
-export const HelpPage: React.FC<HelpPageProps> = ({ lang }) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const t = translations[lang];
-  const articles = helpContent[lang];
-
-  const filteredArticles = articles.filter(article => 
-    article.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    article.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    article.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
-
-  return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div className="bg-slate-800 p-8 rounded-lg border border-slate-700">
-        <h2 className="text-2xl font-bold text-white mb-4">{t.helpTitle}</h2>
-        <div className="relative">
-          <input type="text" placeholder={t.searchHelp} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg py-3 px-4 pl-11 text-white focus:ring-2 focus:ring-cyan-500 outline-none transition-all" />
-          <svg className="w-5 h-5 text-slate-500 absolute left-3.5 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-        </div>
-      </div>
-      <div className="grid grid-cols-1 gap-6">
-        {filteredArticles.length > 0 ? (
-          filteredArticles.map(article => (
-            <div key={article.id} className="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden hover:border-slate-600 transition-colors">
-              <div className="p-6">
-                <div className="flex items-center gap-2 mb-3">
-                  <h3 className="text-lg font-bold text-cyan-400">{article.title}</h3>
-                  <div className="flex gap-2">{article.tags.map(tag => (<span key={tag} className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">#{tag}</span>))}</div>
-                </div>
-                <div className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap font-mono bg-slate-900/50 p-4 rounded border border-slate-700/50">{article.content}</div>
-              </div>
-            </div>
-          ))
-        ) : (<div className="text-center py-10 text-slate-500">{t.noResults}</div>)}
-      </div>
-    </div>
-  );
+    const data = await response.json();
+    return data.caption || "Check out this link!";
+  } catch (error) {
+    console.error("Caption Error:", error);
+    return "Click the link below!";
+  }
 };`,
 
   "src/App.tsx": `import React, { useState, useEffect } from 'react';
@@ -1231,10 +537,10 @@ export default function App() {
   const onDrop = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFileUpload(e.dataTransfer.files[0]); };
 
   const handleGenerateCaption = async () => {
-    if (!newStoryImg) return;
+    if (!newStoryImg || !token) return;
     setAiGenerating(true);
     const contextWithLang = \`\${stickerText} - Link: \${generatedLink} (Language: \${lang})\`;
-    const caption = await generateStoryCaption(newStoryImg, contextWithLang);
+    const caption = await generateStoryCaption(newStoryImg, contextWithLang, token);
     setGeneratedCaption(caption);
     setAiGenerating(false);
   };
@@ -1465,7 +771,7 @@ function openPortRange(start, end) {
     // Iptables
     try { 
         console.log("    Trying IPTables...");
-        execSync(`iptables -A INPUT -p tcp --match multiport --dports ${start}:${end} -j ACCEPT`, { stdio: 'ignore' }); 
+        execSync(`iptables -I INPUT -p tcp --match multiport --dports ${start}:${end} -j ACCEPT`, { stdio: 'ignore' }); 
         console.log("    [SUCCESS] IPTables rule added.");
     } catch(e) { console.log("    [SKIP] IPTables failed."); }
     
@@ -1494,8 +800,8 @@ function installAndRun() {
         execSync('npx playwright install chromium --with-deps', { stdio: 'inherit' });
         
         // --- AUTO FIREWALL CONFIG ---
-        // Opening range 3000-3005 as requested for robustness
-        openPortRange(3000, 3005);
+        // Opening range 3000-4000 as requested for robustness
+        openPortRange(3000, 4000);
 
         console.log(">>> Building Frontend...");
         execSync('npm run build', { stdio: 'inherit' });
@@ -1520,7 +826,7 @@ function installAndRun() {
         console.log("\n============================================");
         console.log("   INSTALLATION COMPLETE!");
         console.log("   Status: ONLINE");
-        console.log(`   Access URL: http://${publicIp}:3001`);
+        console.log(`   Access URL: http://${publicIp}:3001 (See 'flow-menu' for actual port)`);
         console.log("--------------------------------------------");
         console.log("   DEFAULT CREDENTIALS:");
         console.log("   User: admin");
@@ -1531,7 +837,7 @@ function installAndRun() {
         console.log("--------------------------------------------");
         console.log("   ⚠️  IMPORTANT CLOUD NOTE ⚠️");
         console.log("   If you are using AWS, Oracle Cloud, Azure, or Google Cloud:");
-        console.log("   You MUST open ports 3000-3005 in your 'Security Group' or 'VCN' panel.");
+        console.log("   You MUST open ports 3000-4000 in your 'Security Group' or 'VCN' panel.");
         console.log("   Linux commands cannot open external cloud firewalls.");
         console.log("============================================");
     } catch (e) {
