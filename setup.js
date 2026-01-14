@@ -198,6 +198,7 @@ import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { GoogleGenAI } from "@google/genai";
+import { createServer } from 'http';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -963,7 +964,27 @@ export default function App() {
        </main>
     </div>
   );
-}`
+}`,
+  
+  // --- SERVICE: GEMINI (CORRECTED CLIENT-SIDE WRAPPER) ---
+  "src/services/geminiService.ts": `// Client-side wrapper calling backend
+export const generateStoryCaption = async (base64Image: string, context: string, token: string): Promise<string> => {
+  try {
+    const response = await fetch('/api/generate-caption', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': \`Bearer \${token}\`
+        },
+        body: JSON.stringify({ image: base64Image, context })
+    });
+    const data = await response.json();
+    return data.caption || "Check out this link!";
+  } catch (error) {
+    console.error("Caption Error:", error);
+    return "Click the link below!";
+  }
+};`
 };
 
 // --- 2. EXECUTION LOGIC ---
