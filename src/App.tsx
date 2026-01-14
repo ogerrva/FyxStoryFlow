@@ -41,6 +41,7 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [waNumber, setWaNumber] = useState('');
+  const [waMessage, setWaMessage] = useState('');
   const [stickerText, setStickerText] = useState('');
   const [generatedLink, setGeneratedLink] = useState('');
   const [tempDate, setTempDate] = useState('');
@@ -77,6 +78,7 @@ export default function App() {
     }
   }, [token]);
 
+  // Main Data Fetcher
   const fetchData = async () => {
       if (!token) return;
       const headers = { 'Authorization': `Bearer ${token}` };
@@ -101,6 +103,38 @@ export default function App() {
         return () => clearInterval(interval);
     }
   }, [token]);
+
+  // --- View Specific Fetchers ---
+  const fetchSettings = async () => {
+      if (!token) return;
+      try {
+          const res = await fetch(`${API_URL}/settings`, { headers: { 'Authorization': `Bearer ${token}` } });
+          if (res.ok) {
+              const data = await res.json();
+              setSettings(data);
+          }
+      } catch (e) { console.error(e); }
+  };
+
+  const fetchLibrary = async () => {
+      const res = await fetch(`${API_URL}/library`, { headers: { 'Authorization': `Bearer ${token}` } });
+      setLibraryStories(await res.json());
+  };
+
+  const fetchUsers = async () => {
+      const res = await fetch(`${API_URL}/admin/users`, { headers: { 'Authorization': `Bearer ${token}` } });
+      setUsersList(await res.json());
+  };
+
+  // --- Auto-Load Data on View Change ---
+  useEffect(() => {
+      if (!token) return;
+      if (view === 'SETTINGS') fetchSettings();
+      if (view === 'LIBRARY') fetchLibrary();
+      if (view === 'ADMIN') fetchUsers();
+      // Dashboard is handled by the interval
+  }, [view, token]);
+
 
   const login = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -131,8 +165,9 @@ export default function App() {
   useEffect(() => {
       if (!waNumber) { setGeneratedLink(''); return; }
       const cleanNum = waNumber.replace(/\D/g, '');
-      setGeneratedLink(`https://wa.me/${cleanNum}`);
-  }, [waNumber]);
+      const encodedMsg = encodeURIComponent(waMessage);
+      setGeneratedLink(`https://wa.me/${cleanNum}?text=${encodedMsg}`);
+  }, [waNumber, waMessage]);
 
   const handleFileUpload = (file: File) => {
     if (file && file.type.startsWith('image/')) {
@@ -189,6 +224,7 @@ export default function App() {
         formData.append('image', selectedFile);
         formData.append('ctaUrl', generatedLink);
         formData.append('whatsappNumber', waNumber);
+        formData.append('whatsappMessage', waMessage);
         formData.append('stickerText', stickerText);
         formData.append('caption', generatedCaption);
         formData.append('schedules', JSON.stringify(scheduleList));
@@ -235,19 +271,9 @@ export default function App() {
       fetchData();
   };
 
-  const fetchLibrary = async () => {
-      const res = await fetch(`${API_URL}/library`, { headers: { 'Authorization': `Bearer ${token}` } });
-      setLibraryStories(await res.json());
-  };
-
   const handleClone = async (id: string) => {
       await fetch(`${API_URL}/library/clone/${id}`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
       alert("Story copied to your Dashboard!");
-  };
-
-  const fetchUsers = async () => {
-      const res = await fetch(`${API_URL}/admin/users`, { headers: { 'Authorization': `Bearer ${token}` } });
-      setUsersList(await res.json());
   };
 
   const createUser = async (e: React.FormEvent) => {
@@ -341,7 +367,7 @@ export default function App() {
   }
 
   const NavButton = ({ id, label, icon }: any) => (
-    <button onClick={() => { setView(id); if(id === 'LIBRARY') fetchLibrary(); if(id === 'ADMIN') fetchUsers(); }} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${view === id ? 'bg-pink-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}>
+    <button onClick={() => setView(id)} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${view === id ? 'bg-pink-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}>
         <span className="text-xl">{icon}</span>
         <span className="hidden md:block text-sm font-medium">{label}</span>
     </button>
@@ -519,6 +545,7 @@ export default function App() {
                              <input placeholder={t.phoneLabel} value={waNumber} onChange={e=>setWaNumber(e.target.value)} className="bg-black border border-slate-700 rounded p-3 text-white focus:border-pink-500 outline-none" />
                              <input placeholder={t.stickerTextLabel} value={stickerText} onChange={e=>setStickerText(e.target.value)} className="bg-black border border-slate-700 rounded p-3 text-white focus:border-pink-500 outline-none" />
                          </div>
+                         <textarea placeholder={t.messageLabel} value={waMessage} onChange={e=>setWaMessage(e.target.value)} rows={2} className="w-full bg-black border border-slate-700 rounded p-3 text-white focus:border-pink-500 outline-none resize-none" />
                          
                          {/* Scheduling Mini-UI */}
                          <div className="bg-black/30 p-4 rounded-lg border border-slate-800">
