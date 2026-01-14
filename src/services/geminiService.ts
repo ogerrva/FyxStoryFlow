@@ -1,4 +1,4 @@
-
+// Client-side wrapper calling backend
 export const generateStoryCaption = async (base64Image: string, context: string, token: string): Promise<string> => {
   try {
     const response = await fetch('/api/generate-caption', {

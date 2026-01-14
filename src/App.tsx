@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Story, StoryStatus, SystemLog, ViewState, Stats, Language, AppSettings, User } from './types';
 import { LogTerminal } from './components/LogTerminal';
@@ -179,8 +178,9 @@ export default function App() {
   };
 
   const handleCreateStory = async () => {
+    // ALERT ADDED HERE TO FIX "NOTHING HAPPENS"
     if (!selectedFile || scheduleList.length === 0 || !waNumber) {
-        alert("Please upload an image, set a phone number, and at least one schedule.");
+        alert("Faltam dados! Envie uma imagem, defina o número de telefone e adicione pelo menos 1 horário.");
         return;
     }
     setLoading(true);

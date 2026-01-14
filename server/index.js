@@ -26,7 +26,7 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Increased limit for base64 images
 app.use('/uploads', express.static(uploadDir));
 app.use(express.static(path.join(__dirname, '../dist')));
 
@@ -127,7 +127,8 @@ app.post('/api/generate-caption', authenticateToken, async (req, res) => {
         }
         
         const ai = new GoogleGenAI({ apiKey });
-        const cleanBase64 = image.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
+        // CRITICAL FIX: Strip the Data URI header completely
+        const cleanBase64 = image.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, '');
         
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-latest',
@@ -143,6 +144,26 @@ app.post('/api/generate-caption', authenticateToken, async (req, res) => {
     } catch (e) {
         console.error("AI Error:", e.message);
         res.json({ caption: "Error: " + e.message });
+    }
+});
+
+// --- GEMINI CONNECTION TEST ---
+app.post('/api/settings/test-gemini', authenticateToken, async (req, res) => {
+    try {
+        const { apiKey } = req.body;
+        if (!apiKey) return res.json({ success: false, message: "Missing API Key" });
+
+        const ai = new GoogleGenAI({ apiKey });
+        // Simple test request to verify connectivity
+        await ai.models.generateContent({
+            model: 'gemini-2.5-flash-latest',
+            contents: { parts: [{ text: "Ping" }] }
+        });
+
+        res.json({ success: true, message: "Connected!" });
+    } catch (e) {
+        console.error("Gemini Test Error:", e);
+        res.json({ success: false, message: e.message || "Connection Failed" });
     }
 });
 
