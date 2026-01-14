@@ -1,3 +1,4 @@
+
 import { HelpArticle } from './types';
 
 export const translations = {
@@ -69,7 +70,7 @@ export const translations = {
     settingsTitle: "System Configuration",
     saveSettings: "Save Configuration",
     saved: "Saved!",
-    igUser: "Instagram Username",
+    igUser: "Instagram Username, Email or Phone",
     igPass: "Instagram Password",
     proxy: "Proxy Server (Optional)",
     headless: "Headless Mode (No GUI)",
@@ -77,9 +78,12 @@ export const translations = {
     proxyDesc: "Format: http://user:pass@ip:port",
     loginTest: "Test Login (Real-time)",
     architecture: "System Architecture",
-    apiKeyLabel: "Gemini API Key (Required for AI)",
+    apiKeyLabel: "Gemini API Key (Optional for AI)",
     getKeyLink: "Get Free Key",
-    apiKeyDesc: "Paste your Google AI Studio key here"
+    apiKeyDesc: "Paste your Google AI Studio key here",
+    testKey: "Test Connection",
+    apiConnected: "Connected to Gemini!",
+    apiError: "Connection Failed"
   },
   pt: {
     dashboard: "Painel",
@@ -149,7 +153,7 @@ export const translations = {
     settingsTitle: "Configuração do Sistema",
     saveSettings: "Salvar Configurações",
     saved: "Salvo!",
-    igUser: "Usuário do Instagram",
+    igUser: "Usuário, Email ou Telefone",
     igPass: "Senha do Instagram",
     proxy: "Servidor Proxy (Opcional)",
     headless: "Modo Headless (Sem Interface)",
@@ -157,9 +161,12 @@ export const translations = {
     proxyDesc: "Formato: http://user:pass@ip:port",
     loginTest: "Testar Login (Tempo Real)",
     architecture: "Arquitetura do Sistema",
-    apiKeyLabel: "Chave API Gemini (Necessária para IA)",
+    apiKeyLabel: "Chave API Gemini (Opcional para IA)",
     getKeyLink: "Gerar Chave Grátis",
-    apiKeyDesc: "Cole sua chave do Google AI Studio aqui"
+    apiKeyDesc: "Cole sua chave do Google AI Studio aqui",
+    testKey: "Testar Conexão",
+    apiConnected: "Conectado ao Gemini!",
+    apiError: "Falha na Conexão"
   }
 };
 
@@ -169,13 +176,13 @@ export const helpContent: Record<'en' | 'pt', HelpArticle[]> = {
       id: '1',
       title: 'Initial Setup on VPS',
       tags: ['install', 'vps', 'linux'],
-      content: '1. Access your VPS via SSH.\\n2. Ensure Node.js is installed.\\n3. Run \`npm install\` to download dependencies.\\n4. IMPORTANT: Run \`npx playwright install\` to download the browser binaries for your architecture (x64 or ARM64).\\n5. Start the system with \`npm start\`.\\n6. Go to the Settings tab and enter your Instagram credentials.'
+      content: '1. Access your VPS via SSH.\n2. Ensure Node.js is installed.\n3. Run `npm install` to download dependencies.\n4. IMPORTANT: Run `npx playwright install` to download the browser binaries for your architecture (x64 or ARM64).\n5. Start the system with `npm start`.\n6. Go to the Settings tab and enter your Instagram credentials.'
     },
     {
       id: '2',
       title: 'Creating a Recurring Story',
       tags: ['create', 'recurring'],
-      content: 'To create a story that repeats every day:\\n1. Upload your image.\\n2. Configure the WhatsApp link.\\n3. In the "Scheduling" section, toggle "Repeat Daily" ON.\\n4. Select the TIME you want it to post. The date part is ignored for recurring posts, only the time is used.'
+      content: 'To create a story that repeats every day:\n1. Upload your image.\n2. Configure the WhatsApp link.\n3. In the "Scheduling" section, toggle "Repeat Daily" ON.\n4. Select the TIME you want it to post. The date part is ignored for recurring posts, only the time is used.'
     },
     {
       id: '3',
@@ -187,7 +194,7 @@ export const helpContent: Record<'en' | 'pt', HelpArticle[]> = {
       id: '4',
       title: 'How to get Gemini API Key',
       tags: ['api', 'key', 'gemini'],
-      content: '1. Click the "Get Free Key" button in Settings or go to aistudio.google.com.\\n2. Sign in with your Google Account.\\n3. Click "Create API Key" or "Get API Key".\\n4. Copy the key starting with "AIza...".\\n5. Paste it into the Settings field in FyxStoryFlow and Save.'
+      content: '1. Click the "Get Free Key" button in Settings or go to aistudio.google.com.\n2. Sign in with your Google Account.\n3. Click "Create API Key" or "Get API Key".\n4. Copy the key starting with "AIza...".\n5. Paste it into the Settings field in FyxStoryFlow and Save.'
     }
   ],
   pt: [
@@ -195,13 +202,13 @@ export const helpContent: Record<'en' | 'pt', HelpArticle[]> = {
       id: '1',
       title: 'Configuração Inicial na VPS',
       tags: ['instalação', 'vps', 'linux'],
-      content: '1. Acesse sua VPS via SSH.\\n2. Garanta que o Node.js está instalado.\\n3. Execute \`npm install\` para baixar as dependências.\\n4. IMPORTANTE: Execute \`npx playwright install\` para baixar os binários do navegador compatíveis com sua arquitetura (x64 ou ARM64).\\n5. Inicie o sistema com \`npm start\`.\\n6. Vá para a aba Configurações e insira suas credenciais do Instagram.'
+      content: '1. Acesse sua VPS via SSH.\n2. Garanta que o Node.js está instalado.\n3. Execute `npm install` para baixar as dependências.\n4. IMPORTANTE: Execute `npx playwright install` para baixar os binários do navegador compatíveis com sua arquitetura (x64 ou ARM64).\n5. Inicie o sistema com `npm start`.\n6. Vá para a aba Configurações e insira suas credenciais do Instagram.'
     },
     {
       id: '2',
       title: 'Criando Story Recorrente',
       tags: ['criar', 'recorrência'],
-      content: 'Para criar um story que se repete todo dia:\\n1. Envie sua imagem.\\n2. Configure o link do WhatsApp.\\n3. Na seção "Agendamento", ative a opção "Repetir Diariamente".\\n4. Selecione o HORÁRIO que deseja postar. A data é ignorada para posts recorrentes, apenas a hora é usada.'
+      content: 'Para criar um story que se repete todo dia:\n1. Envie sua imagem.\n2. Configure o link do WhatsApp.\n3. Na seção "Agendamento", ative a opção "Repetir Diariamente".\n4. Selecione o HORÁRIO que deseja postar. A data é ignorada para posts recorrentes, apenas a hora é usada.'
     },
     {
       id: '3',
@@ -213,7 +220,7 @@ export const helpContent: Record<'en' | 'pt', HelpArticle[]> = {
       id: '4',
       title: 'Como criar chave API Gemini',
       tags: ['api', 'chave', 'ia', 'gemini'],
-      content: '1. Clique no botão "Gerar Chave Grátis" nas Configurações ou acesse aistudio.google.com.\\n2. Faça login com sua conta Google.\\n3. Clique em "Create API Key" (Criar Chave).\\n4. Copie o código que começa com "AIza...".\\n5. Cole no campo "Chave API Gemini" nas configurações do FyxStoryFlow e salve.'
+      content: '1. Clique no botão "Gerar Chave Grátis" nas Configurações ou acesse aistudio.google.com.\n2. Faça login com sua conta Google.\n3. Clique em "Create API Key" (Criar Chave).\n4. Copie o código que começa com "AIza...".\n5. Cole no campo "Chave API Gemini" nas configurações do FyxStoryFlow e salve.'
     }
   ]
 };
