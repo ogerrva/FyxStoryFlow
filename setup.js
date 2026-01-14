@@ -12,13 +12,13 @@ console.log("\x1b[36m%s\x1b[0m", "========================================");
 
 // --- 1. FILE CONTENTS DATABASE ---
 const files = {
-  // --- UTILITY: MANAGE.JS (CLI MENU) ---
+  // --- UTILITY: MANAGE.JS (ENTERPRISE CLI MENU) ---
   "manage.js": `import Database from 'better-sqlite3';
 import bcrypt from 'bcryptjs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
-import { execSync } from 'child_process';
+import { execSync, exec } from 'child_process';
 import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,75 +28,175 @@ const dbPath = path.join(__dirname, 'data/storyflow.db');
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const question = (query) => new Promise((resolve) => rl.question(query, resolve));
 
-console.clear();
-console.log("\\x1b[36m%s\\x1b[0m", "========================================");
-console.log("\\x1b[36m%s\\x1b[0m", "   FYX STORY FLOW - CLI MANAGER         ");
-console.log("\\x1b[36m%s\\x1b[0m", "========================================");
+// --- COLORS ---
+const C = {
+    Reset: "\\x1b[0m", Bright: "\\x1b[1m",
+    FgRed: "\\x1b[31m", FgGreen: "\\x1b[32m", FgYellow: "\\x1b[33m", FgCyan: "\\x1b[36m", FgWhite: "\\x1b[37m",
+    BgBlue: "\\x1b[44m"
+};
+
+const header = () => {
+    console.clear();
+    console.log(C.FgCyan + "================================================" + C.Reset);
+    console.log(C.Bright + "      FYX STORY FLOW - ENTERPRISE MANAGER       " + C.Reset);
+    console.log(C.FgCyan + "================================================" + C.Reset);
+    try {
+        const statusApi = execSync("pm2 jlist").toString();
+        const processes = JSON.parse(statusApi);
+        const api = processes.find(p => p.name === 'fyx-api');
+        const worker = processes.find(p => p.name === 'fyx-worker');
+        
+        const apiStatus = api && api.pm2_env.status === 'online' ? C.FgGreen + "ONLINE" + C.Reset : C.FgRed + "OFFLINE" + C.Reset;
+        const workerStatus = worker && worker.pm2_env.status === 'online' ? C.FgGreen + "ONLINE" + C.Reset : C.FgRed + "OFFLINE" + C.Reset;
+        
+        console.log(\` API Service:    \${apiStatus}\`);
+        console.log(\` Worker Engine:  \${workerStatus}\`);
+    } catch(e) { console.log(C.FgYellow + " PM2 Status:     Unknown (PM2 not running?)" + C.Reset); }
+    console.log(C.FgCyan + "------------------------------------------------" + C.Reset);
+};
+
+const wait = (ms) => new Promise(res => setTimeout(res, ms));
 
 const main = async () => {
     while (true) {
-        console.log("\\n1. Reset Admin Password");
-        console.log("2. Create New Admin User");
-        console.log("3. View System Logs (Tail)");
-        console.log("4. Restart Services");
-        console.log("5. Uninstall & Close Ports");
-        console.log("0. Exit");
+        header();
+        console.log(C.Bright + " MAINTENANCE & OPERATIONS:" + C.Reset);
+        console.log(" [1] 📄 View Live Logs (Press Ctrl+C to exit logs)");
+        console.log(" [2] 🔄 Restart All Services");
+        console.log(" [3] 🏗️  Update/Rebuild Application (Apply Code Changes)");
+        console.log(" [4] 🔧 Force Repair/Reinstall (Fix Dependencies & Browsers)");
+        console.log("");
+        console.log(C.Bright + " CONFIGURATION & SECURITY:" + C.Reset);
+        console.log(" [5] 👤 User Management (Reset Password / Create Admin)");
+        console.log(" [6] 🌐 Firewall & Network Diagnostics");
+        console.log(" [7] 🗑️  UNINSTALL SYSTEM COMPLETELY");
+        console.log("");
+        console.log(" [0] Exit");
+        console.log(C.FgCyan + "------------------------------------------------" + C.Reset);
         
-        const answer = await question("\\nSelect option: ");
+        const answer = await question(" Select option: ");
         
         try {
+            // --- 1. LOGS ---
             if (answer === '1') {
-                const db = new Database(dbPath);
-                const newPass = await question("Enter new password for 'admin': ");
-                const hash = bcrypt.hashSync(newPass, 10);
-                db.prepare("UPDATE users SET password = ? WHERE username = 'admin'").run(hash);
-                console.log("\\x1b[32m%s\\x1b[0m", ">> Password updated successfully.");
+                console.log(C.FgYellow + ">> Streaming logs..." + C.Reset);
+                try { execSync('pm2 logs --lines 50', { stdio: 'inherit' }); } catch(e) {}
             }
+            
+            // --- 2. RESTART ---
             else if (answer === '2') {
-                const db = new Database(dbPath);
-                const user = await question("Enter new username: ");
-                const pass = await question("Enter password: ");
-                const hash = bcrypt.hashSync(pass, 10);
-                try {
-                    db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)").run(Date.now().toString(), user, hash, 'admin');
-                    console.log("\\x1b[32m%s\\x1b[0m", ">> Admin user created.");
-                } catch(e) { console.log("\\x1b[31m%s\\x1b[0m", ">> Error: Username likely exists."); }
-            }
-            else if (answer === '3') {
-                console.log(">> Showing last 20 logs (Press Ctrl+C to exit logs)...");
-                try { execSync('pm2 logs --lines 20', { stdio: 'inherit' }); } catch(e) {}
-            }
-            else if (answer === '4') {
-                console.log(">> Restarting PM2...");
+                console.log(C.FgYellow + ">> Restarting PM2 Services..." + C.Reset);
                 execSync('pm2 restart all', { stdio: 'inherit' });
-                console.log("\\x1b[32m%s\\x1b[0m", ">> Services restarted.");
+                console.log(C.FgGreen + ">> Done." + C.Reset);
+                await wait(2000);
             }
+
+            // --- 3. UPDATE / REBUILD ---
+            else if (answer === '3') {
+                console.log(C.FgCyan + ">> Starting Build Process..." + C.Reset);
+                console.log(">> Installing any new dependencies...");
+                execSync('npm install', { stdio: 'inherit' });
+                console.log(">> Compiling Frontend...");
+                execSync('npm run build', { stdio: 'inherit' });
+                console.log(">> Reloading Services...");
+                execSync('pm2 reload all', { stdio: 'inherit' });
+                console.log(C.FgGreen + ">> Update Complete." + C.Reset);
+                await question("Press Enter to continue...");
+            }
+
+            // --- 4. REPAIR / REINSTALL ---
+            else if (answer === '4') {
+                console.log(C.FgRed + "⚠️  WARNING: This will delete 'node_modules' and re-download everything." + C.Reset);
+                const conf = await question("Type 'YES' to proceed: ");
+                if (conf === 'YES') {
+                    console.log(">> Cleaning old files...");
+                    execSync('rm -rf node_modules package-lock.json dist', { stdio: 'inherit' });
+                    console.log(">> Installing Dependencies (this may take time)...");
+                    execSync('npm install', { stdio: 'inherit' });
+                    console.log(">> Installing Playwright Browsers...");
+                    execSync('npx playwright install chromium --with-deps', { stdio: 'inherit' });
+                    console.log(">> Building App...");
+                    execSync('npm run build', { stdio: 'inherit' });
+                    console.log(">> Restarting...");
+                    execSync('pm2 restart all', { stdio: 'inherit' });
+                    console.log(C.FgGreen + ">> System Repaired." + C.Reset);
+                } else { console.log("Cancelled."); }
+                await question("Press Enter to continue...");
+            }
+
+            // --- 5. USER MANAGEMENT ---
             else if (answer === '5') {
-                const confirm = await question("TYPE 'DELETE' TO CONFIRM UNINSTALL: ");
+                console.log("\\n [A] Reset 'admin' Password");
+                console.log(" [B] Create New Admin User");
+                const sub = (await question(" Select: ")).toUpperCase();
+                
+                const db = new Database(dbPath);
+                if (sub === 'A') {
+                    const newPass = await question("Enter new password for 'admin': ");
+                    if(newPass) {
+                        const hash = bcrypt.hashSync(newPass, 10);
+                        db.prepare("UPDATE users SET password = ? WHERE username = 'admin'").run(hash);
+                        console.log(C.FgGreen + ">> Password updated." + C.Reset);
+                    }
+                } else if (sub === 'B') {
+                    const user = await question("Enter new username: ");
+                    const pass = await question("Enter password: ");
+                    if(user && pass) {
+                        const hash = bcrypt.hashSync(pass, 10);
+                        try {
+                            db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)").run(Date.now().toString(), user, hash, 'admin');
+                            console.log(C.FgGreen + ">> Admin user created." + C.Reset);
+                        } catch(e) { console.log(C.FgRed + ">> Error: Username likely exists." + C.Reset); }
+                    }
+                }
+                await wait(2000);
+            }
+
+            // --- 6. NETWORK DIAGNOSTICS ---
+            else if (answer === '6') {
+                console.log(C.FgYellow + ">> Checking Network Config..." + C.Reset);
+                try {
+                    const ip = execSync('curl -s ifconfig.me --connect-timeout 5').toString().trim();
+                    console.log(\`>> Public IP detected: \${C.Bright}\${ip}\${C.Reset}\`);
+                } catch(e) { console.log(">> Could not detect Public IP."); }
+
+                console.log(">> Re-applying Firewall Rules (Ports 3000-3005)...");
+                try { execSync('ufw allow 3000:3005/tcp', { stdio: 'ignore' }); console.log("   - UFW: OK"); } catch(e) {}
+                try { execSync('iptables -A INPUT -p tcp --match multiport --dports 3000:3005 -j ACCEPT', { stdio: 'ignore' }); console.log("   - IPTables: OK"); } catch(e) {}
+                
+                console.log(C.FgGreen + ">> Network diagnostics done." + C.Reset);
+                await question("Press Enter to continue...");
+            }
+
+            // --- 7. UNINSTALL ---
+            else if (answer === '7') {
+                console.log(C.BgBlue + C.Bright + " UNINSTALL SYSTEM " + C.Reset);
+                const confirm = await question("TYPE 'DELETE' TO CONFIRM PERMANENT REMOVAL: ");
                 if (confirm === 'DELETE') {
                     console.log(">> Stopping Services...");
                     try { execSync('pm2 delete fyx-api', { stdio: 'ignore' }); } catch(e){}
                     try { execSync('pm2 delete fyx-worker', { stdio: 'ignore' }); } catch(e){}
                     
-                    console.log(">> Closing Firewall Ports (3000-3005)...");
-                    // UFW
+                    console.log(">> Closing Firewall Ports...");
                     try { execSync('ufw delete allow 3000:3005/tcp', { stdio: 'inherit' }); } catch(e) {}
-                    // Firewalld
-                    try { execSync('firewall-cmd --zone=public --remove-port=3000-3005/tcp --permanent', { stdio: 'ignore' }); execSync('firewall-cmd --reload', { stdio: 'ignore' }); } catch(e) {}
-                    // Iptables
                     try { execSync('iptables -D INPUT -p tcp --match multiport --dports 3000:3005 -j ACCEPT', { stdio: 'ignore' }); } catch(e) {}
                     
-                    console.log(">> Removing Files...");
+                    console.log(">> Removing Global Command...");
                     try { fs.unlinkSync('/usr/local/bin/flow-menu'); } catch(e){}
-                    console.log(">> To finish, run: cd .. && rm -rf " + __dirname);
+                    
+                    console.log(C.FgRed + ">> To finish removing files, run: cd .. && rm -rf " + __dirname + C.Reset);
                     process.exit(0);
                 }
             }
+
+            // --- EXIT ---
             else if (answer === '0') {
+                console.clear();
                 process.exit(0);
             }
         } catch (e) {
-            console.log("\\x1b[31m%s\\x1b[0m", "Error: " + e.message);
+            console.log(C.FgRed + "Error: " + e.message + C.Reset);
+            await question("Press Enter to continue...");
         }
     }
 };
